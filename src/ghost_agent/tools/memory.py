@@ -21,8 +21,17 @@ async def tool_gain_knowledge(filename: str, sandbox_dir: Path, memory_system):
     import time
     import fitz  # PyMuPDF
 
-    if len(filename) > 2000 or "\n" in filename:
-        return "Error: Input contains newlines or is too long."
+    # ULTRA-AGGRESSIVE SELF-HEALING: 
+    # 1. Clean whitespace and carriage returns
+    # 2. Extract only the first non-empty line
+    clean_name = str(filename).replace('\r', '').strip()
+    if '\n' in clean_name:
+        clean_name = [line.strip() for line in clean_name.split('\n') if line.strip()][0]
+    
+    filename = clean_name
+
+    if len(filename) > 2000:
+        return "Error: Path is too long."
 
     pretty_log("Knowledge Ingestion", filename, icon=Icons.MEM_INGEST)
     if not memory_system: return "Error: Memory system is disabled."

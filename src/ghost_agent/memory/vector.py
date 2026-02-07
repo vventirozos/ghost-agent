@@ -11,7 +11,36 @@ from chromadb.config import Settings
 from ..utils.logging import Icons, pretty_log
 from ..utils.helpers import get_utc_timestamp
 
+from chromadb.api.types import EmbeddingFunction, Documents, Embeddings
+
 logger = logging.getLogger("GhostAgent")
+
+class GhostEmbeddingFunction(EmbeddingFunction):
+    """
+    Custom robust embedding function that uses the upstream LLM.
+    Handles proxy bypass and retries.
+    """
+    def __init__(self, upstream_url: str):
+        import httpx
+        self.url = f"{upstream_url}/v1/embeddings"
+        # Explicitly disable proxy for local LLM and disable http2
+        self.client = httpx.Client(timeout=60.0, proxy=None, http2=False)
+
+    def __call__(self, input: Documents) -> Embeddings:
+        # ChromaDB expects a List of Embeddings
+        import time
+        for attempt in range(3):
+            try:
+                resp = self.client.post(self.url, json={"input": input, "model": "default"})
+                resp.raise_for_status()
+                data = resp.json()
+                return [item["embedding"] for item in data["data"]]
+            except Exception as e:
+                if attempt < 2:
+                    time.sleep(2 ** attempt)
+                else:
+                    logger.error(f"Embedding failed after 3 attempts: {e}")
+                    raise
 
 class VectorMemory:
     def __init__(self, memory_dir: Path, upstream_url: str):
@@ -27,13 +56,8 @@ class VectorMemory:
             self.library_file.write_text("[]")
 
         try:
-            from chromadb.utils import embedding_functions
-            # Use the upstream LLM for embeddings (RAM efficient)
-            self.embedding_fn = embedding_functions.OpenAIEmbeddingFunction(
-                api_key="sk-no-key-required",
-                api_base=f"{upstream_url}/v1",
-                model_name="default"
-            )
+            # Use our custom robust embedding function
+            self.embedding_fn = GhostEmbeddingFunction(upstream_url)
         except Exception as e:
             logger.error(f"Error initializing embedding function: {e}")
             sys.exit(1)
