@@ -132,14 +132,14 @@ class GhostAgent:
 
                 # VERBATIM MEMORY INJECTION LOGIC FROM ORIGINAL SCRIPT
                 is_fact_check = "fact-check" in lc or "verify" in lc
-                trivial_triggers = ["time", "date", "weather", "who are you", "system health", "status"]
+                trivial_triggers = ["time", "date", "weather", "who are you", "system health", "status", "name is", "hello", " hi "]
                 is_trivial = any(t in last_user_content.lower() for t in trivial_triggers)
 
                 # ONLY inject memory if it's a general chat, NOT trivial, and NOT a fact check
                 should_fetch_memory = (
                     not is_fact_check and 
                     not is_trivial and
-                    (not has_coding_intent or any(x in lc for x in ["remember", "previous", "recall"]))
+                    (not has_coding_intent or "remember" in last_user_content or "previous" in last_user_content or "recall" in last_user_content)
                 )
 
                 if self.context.memory_system and last_user_content and should_fetch_memory:
@@ -158,9 +158,10 @@ class GhostAgent:
                 for turn in range(20):
                     if force_stop: break
                     
-                    # Original recovery logic: boost temperature significantly on failure to brainstorm fixes
+                    # --- A. DYNAMIC TEMPERATURE (ERROR RECOVERY) ---
                     if last_was_failure:
-                        active_temp = min(current_temp + 0.3, 0.95)
+                        boost = 0.3 if has_coding_intent else 0.2
+                        active_temp = min(current_temp + boost, 0.95)
                         pretty_log("Brainstorming", f"Increasing variance to {active_temp:.2f} to solve error", icon=Icons.IDEA)
                     else:
                         active_temp = current_temp

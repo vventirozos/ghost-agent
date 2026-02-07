@@ -64,12 +64,17 @@ async def tool_gain_knowledge(filename: str, sandbox_dir: Path, memory_system):
     pretty_log("Vector Embedding", f"Processing {len(chunks)} fragments", icon=Icons.MEM_EMBED)
     try:
         def batch_ingest(chunk_list, source_name):
-            batch_size = 50 
+            # Reduced batch size for smoother upstream LLM processing
+            batch_size = 25 
             for i in range(0, len(chunk_list), batch_size):
                 batch = chunk_list[i : i + batch_size]
                 ids = [hashlib.md5(f"{source_name}_{i+j}_{chunk[:20]}".encode()).hexdigest() for j, chunk in enumerate(batch)]
                 metadatas = [{"source": source_name, "type": "document", "chunk_index": i+j, "timestamp": get_utc_timestamp()} for j in range(len(batch))]
                 memory_system.collection.upsert(documents=batch, metadatas=metadatas, ids=ids)
+                
+                # Progress logging every 2 batches
+                if i % 50 == 0:
+                    pretty_log("Ingestion Progress", f"Processed {min(i+batch_size, len(chunk_list))}/{len(chunk_list)} fragments", icon=Icons.MEM_EMBED)
         
         await asyncio.to_thread(batch_ingest, chunks, filename)
         preview = full_text[:300].replace("\n", " ") + "..."
