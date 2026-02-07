@@ -92,12 +92,17 @@ class GhostAgent:
                 
                 # VERBATIM INTENT DETECTION FROM ORIGINAL SCRIPT
                 coding_keywords = ["python", "bash", "sh", "script", "code", "def ", "import "]
-                coding_actions = ["write", "run", "execute", "debug", "fix", "create", "generate", "count"]
+                coding_actions = ["write", "run", "execute", "debug", "fix", "create", "generate"] # Removed 'count' to prevent math loops
                 has_coding_intent = False
                 if any(k in lc for k in coding_keywords):
                     if any(a in lc for a in coding_actions): has_coding_intent = True
-                if any(x in lc for x in ["learn", "read", "ingest", "gain knowledge"]): has_coding_intent = False
-                if any(x in lc for x in ["execute", "script", "word_count.py"]): has_coding_intent = True
+                
+                # Special cases: Force coding for specific file requests
+                if any(x in lc for x in ["execute", "script", ".py"]): has_coding_intent = True
+                
+                # Trivial check: If it's pure arithmetic without 'python' mentions, don't force specialist mode
+                if re.match(r'^[\d\s\+\-\*\/\(\)\=\?]+$', lc):
+                    has_coding_intent = False
 
                 profile_context = self.context.profile_memory.get_context_string() if self.context.profile_memory else ""
                 profile_context = profile_context.replace("\r", "")
