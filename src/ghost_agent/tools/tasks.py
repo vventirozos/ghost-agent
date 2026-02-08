@@ -10,7 +10,7 @@ logger = logging.getLogger("GhostAgent")
 run_proactive_task_fn = None
 
 async def tool_schedule_task(task_name: str, prompt: str, cron_expression: str, scheduler, memory_system):
-    pretty_log("Tool Call: Schedule Task", f"Name: {task_name} | Expr: {cron_expression}", icon="📆")
+    pretty_log("Task Schedule", f"Name: {task_name} | Expr: {cron_expression}", icon=Icons.BRAIN_PLAN)
     if run_proactive_task_fn is None:
         return "Error: Proactive task runner not initialized."
         
@@ -50,7 +50,7 @@ async def tool_schedule_task(task_name: str, prompt: str, cron_expression: str, 
         return f"ERROR: {e}"
 
 async def tool_stop_all_tasks(scheduler):
-    pretty_log("Tool Call: Stop All Tasks", "Deleting all jobs...", icon="🛑")
+    pretty_log("Task Clear", "Deleting all scheduled jobs", icon=Icons.STOP)
     try:
         jobs = scheduler.get_jobs()
         if not jobs:
@@ -62,7 +62,7 @@ async def tool_stop_all_tasks(scheduler):
         return f"Error stopping tasks: {e}"
 
 async def tool_stop_task(task_identifier: str, scheduler):
-    pretty_log("Tool Call: Stop Task", task_identifier, icon="🛑")
+    pretty_log("Task Stop", task_identifier, icon=Icons.STOP)
     jobs = scheduler.get_jobs()
     target_job = None
     for job in jobs:
@@ -78,7 +78,7 @@ async def tool_stop_task(task_identifier: str, scheduler):
         return f"Error stopping task: {e}"
 
 async def tool_list_tasks(scheduler):
-    pretty_log("Tool Call: List Tasks", None, icon="📋")
+    pretty_log("Task List", "Querying scheduler", icon=Icons.BRAIN_PLAN)
     jobs = scheduler.get_jobs()
     if not jobs:
         return "No active scheduled tasks."

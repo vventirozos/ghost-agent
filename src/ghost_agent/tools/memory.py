@@ -8,7 +8,7 @@ from ..utils.helpers import get_utc_timestamp, helper_fetch_url_content, recursi
 from ..memory.scratchpad import Scratchpad
 
 async def tool_remember(text: str, memory_system):
-    pretty_log("Memory Manual Store", text[:50], icon=Icons.MEM_SAVE)
+    pretty_log("Memory Store", text, icon=Icons.MEM_SAVE)
     if not memory_system: return "Error: Memory system not active."
     try:
         meta = {"timestamp": get_utc_timestamp(), "type": "manual"}
@@ -20,20 +20,34 @@ async def tool_remember(text: str, memory_system):
 async def tool_gain_knowledge(filename: str, sandbox_dir: Path, memory_system):
     import time
     import fitz  # PyMuPDF
+    import re
 
     # ULTRA-AGGRESSIVE SELF-HEALING: 
     # 1. Clean whitespace and carriage returns
     # 2. Extract only the first non-empty line
-    clean_name = str(filename).replace('\r', '').strip()
-    if '\n' in clean_name:
-        clean_name = [line.strip() for line in clean_name.split('\n') if line.strip()][0]
+    # 3. Strip LLM artifacts like "Downloaded " or " (123 bytes)"
+    raw_name = str(filename).replace('\r', '').strip()
+    if '\n' in raw_name:
+        raw_name = [line.strip() for line in raw_name.split('\n') if line.strip()][0]
     
-    filename = clean_name
+    # 3. Strip LLM artifacts like "Downloaded " or " (123 bytes)"
+    raw_name = str(filename).replace('\r', '').strip()
+    if '\n' in raw_name:
+        raw_name = [line.strip() for line in raw_name.split('\n') if line.strip()][0]
+    
+    # Strip common prefixes and quotes
+    raw_name = re.sub(r'^(Downloaded|File|Path|Document|Source|Text|Content)\b\s*:?\s*', '', raw_name, flags=re.IGNORECASE)
+    raw_name = raw_name.strip("'\"` ")
+    
+    # Strip parenthetical info (e.g., "file.pdf (1234 bytes)")
+    raw_name = re.sub(r'\s*\([\d\s\w,]+\).*$', '', raw_name, flags=re.IGNORECASE)
+    
+    filename = raw_name.strip()
 
     if len(filename) > 2000:
         return "Error: Path is too long."
 
-    pretty_log("Knowledge Ingestion", filename, icon=Icons.MEM_INGEST)
+    pretty_log("Ingesting Data", filename, icon=Icons.MEM_INGEST)
     if not memory_system: return "Error: Memory system is disabled."
 
     current_library = memory_system.get_library()
@@ -51,7 +65,34 @@ async def tool_gain_knowledge(filename: str, sandbox_dir: Path, memory_system):
         except Exception as e: return f"Web Error: {str(e)}"
     else:
         file_path = sandbox_dir / filename
-        if not file_path.exists(): return f"Error: File '{filename}' not found."
+        
+        # --- ROBUST FILE RESOLUTION ---
+        if not file_path.exists():
+            # Try a case-insensitive match or search for the filename in the sandbox
+            try:
+                all_files = list(sandbox_dir.rglob("*"))
+                
+                # Priority 1: Exact name match (case-insensitive)
+                matches = [f for f in all_files if f.name.lower() == filename.lower()]
+                
+                # Priority 2: Stem match (e.g., "bitcoin" matches "bitcoin.pdf")
+                if not matches:
+                    target_stem = Path(filename).stem.lower()
+                    matches = [f for f in all_files if f.stem.lower() == target_stem]
+                
+                # Priority 3: Substring match
+                if not matches:
+                    matches = [f for f in all_files if filename.lower() in f.name.lower() and f.is_file()]
+                
+                if matches:
+                    file_path = matches[0]
+                    filename = str(file_path.relative_to(sandbox_dir))
+                    pretty_log("KB Auto-Resolve", filename, icon=Icons.OK)
+                else:
+                    return f"Error: File '{filename}' not found."
+            except:
+                return f"Error: File '{filename}' not found."
+
         try:
             if filename.lower().endswith(".pdf"):
                 doc = fitz.open(file_path)
@@ -66,11 +107,11 @@ async def tool_gain_knowledge(filename: str, sandbox_dir: Path, memory_system):
 
     if not full_text.strip(): return "Error: Extracted text is empty."
 
-    pretty_log("Text Processing", f"Splitting {len(full_text)} chars", icon=Icons.MEM_SPLIT)
+    pretty_log("KB Split", f"{len(full_text)} chars", icon=Icons.MEM_SPLIT)
     chunks = recursive_split_text(full_text, chunk_size=1000, chunk_overlap=100)
     if not chunks: return "Error: No chunks created."
 
-    pretty_log("Vector Embedding", f"Processing {len(chunks)} fragments", icon=Icons.MEM_EMBED)
+    pretty_log("KB Embed", f"{len(chunks)} fragments", icon=Icons.MEM_EMBED)
     try:
         def batch_ingest(chunk_list, source_name):
             # Reduced batch size for smoother upstream LLM processing
@@ -83,7 +124,7 @@ async def tool_gain_knowledge(filename: str, sandbox_dir: Path, memory_system):
                 
                 # Progress logging every 2 batches
                 if i % 50 == 0:
-                    pretty_log("Ingestion Progress", f"Processed {min(i+batch_size, len(chunk_list))}/{len(chunk_list)} fragments", icon=Icons.MEM_EMBED)
+                    pretty_log("KB Progress", f"{min(i+batch_size, len(chunk_list))}/{len(chunk_list)}", icon=Icons.MEM_EMBED)
         
         await asyncio.to_thread(batch_ingest, chunks, filename)
         preview = full_text[:300].replace("\n", " ") + "..."
@@ -95,9 +136,10 @@ async def tool_gain_knowledge(filename: str, sandbox_dir: Path, memory_system):
     return f"SUCCESS: Ingested '{filename}'."
 
 async def tool_recall(query: str, memory_system):
-    pretty_log("Conceptual Recall", query, icon=Icons.MEM_READ)
+    pretty_log("Memory Recall", query, icon=Icons.MEM_READ)
     if not memory_system: return "Error: Memory system is disabled."
     try:
+        # Use a higher limit for initial search, then filter strictly
         results = await asyncio.to_thread(memory_system.search_advanced, query, limit=5)
     except: return "Error: Memory retrieval failed."
 
@@ -106,25 +148,31 @@ async def tool_recall(query: str, memory_system):
         score = res.get('score', 1.0)
         source = res.get('metadata', {}).get('source', 'Unknown')
         text = res.get('text', '')
+        m_type = res.get('metadata', {}).get('type', 'auto')
         
-        if score < 0.8: relevance = "HIGH"
-        elif score < 1.1: relevance = "MEDIUM"
+        # TIGHTER THRESHOLDS FOR RECALL TOOL
+        if score < 0.6: relevance = "HIGH"
+        elif score < 0.9: relevance = "MEDIUM"
         else: relevance = "LOW"
         
-        pretty_log("Memory Match", f"[{relevance}] {score:.3f} | {source}", icon=Icons.MEM_MATCH)
+        pretty_log("Memory Match", f"[{relevance}] {score:.2f} | {source}", icon=Icons.MEM_MATCH)
 
-        if score < 1.3:
+        # 1.1 is a safe upper bound for "actual relevance" 
+        # while still filtering out complete noise (which is usually > 1.25)
+        if score < 1.1:
             valid_chunks.append(f"SOURCE: {source}\nCONTENT: {text}")
 
     if valid_chunks:
-        return f"SYSTEM: Found {len(valid_chunks)} memories.\n\n" + "\n\n".join(valid_chunks)
+        return f"SYSTEM: Found {len(valid_chunks)} highly relevant memories.\n\n" + "\n\n".join(valid_chunks)
     else:
-        return "SYSTEM OBSERVATION: Zero relevant documents found."
+        return "SYSTEM OBSERVATION: Zero high-confidence memories found for this query."
 
-async def tool_unified_forget(target: str, sandbox_dir: Path, memory_system):
-    pretty_log("Memory Purge", target, icon=Icons.MEM_WIPE)
+async def tool_unified_forget(target: str, sandbox_dir: Path, memory_system, profile_memory=None):
+    pretty_log("Memory Wipe", target, icon=Icons.MEM_WIPE)
     if not memory_system: return "Report: Memory disabled."
     report = []
+    
+    # 1. Disk Cleanup
     try:
         disk_match = next((f for f in os.listdir(sandbox_dir) if target.lower() in f.lower()), None)
         if disk_match:
@@ -132,31 +180,71 @@ async def tool_unified_forget(target: str, sandbox_dir: Path, memory_system):
             report.append(f"✅ Disk: Deleted '{disk_match}'")
     except: pass
 
+    # 2. Vector Memory Cleanup (Search then Destroy)
     try:
+        # --- FUZZY FILENAME SWEEP ---
+        # Get all unique sources currently in the DB
         data = await asyncio.to_thread(memory_system.collection.get, include=["metadatas"])
         all_sources = set()
         if data and "metadatas" in data:
             for meta in data["metadatas"]:
-                if meta and "source" in meta: all_sources.add(meta["source"])
+                if meta and "source" in meta:
+                    all_sources.add(meta["source"])
         
-        db_match = next((s for s in all_sources if target.lower() in s.lower()), None)
-        if db_match:
-            await asyncio.to_thread(memory_system.delete_document_by_name, db_match)
-            report.append(f"✅ Memory: Wiped document '{db_match}'.")
+        # Look for a fuzzy match in filenames
+        target_stem = Path(target).stem.lower()
+        fuzzy_matches = [s for s in all_sources if target_stem in s.lower() or s.lower() in target_stem]
+        for match in fuzzy_matches:
+            await asyncio.to_thread(memory_system.delete_document_by_name, match)
+            report.append(f"✅ Vector: Wiped document '{match}'.")
 
-        results = memory_system.collection.query(query_texts=[target], n_results=5)
-        if results['ids']:
-            for i, dist in enumerate(results['distances'][0]):
-                if dist < 0.6 or target.lower() in results['documents'][0][i].lower():
-                    memory_system.collection.delete(ids=[results['ids'][0][i]])
-                    report.append(f"✅ Sweep: Forgot fact.")
-    except Exception as e: report.append(f"⚠️ Memory Error: {e}")
+        # --- SEMANTIC SWEEP (For loose facts and smart_memory "auto" facts) ---
+        candidates = memory_system.collection.query(query_texts=[target], n_results=10)
+        
+        deleted_count = 0
+        if candidates['ids']:
+            for i, dist in enumerate(candidates['distances'][0]):
+                doc_text = candidates['documents'][0][i]
+                mem_id = candidates['ids'][0][i]
+                meta = candidates['metadatas'][0][i] or {}
+                m_type = meta.get('type', 'auto')
+                
+                # If distance is close OR the target word is explicitly in the text
+                # We are more aggressive with 'auto' memories when forgetting
+                semantic_threshold = 0.8 if m_type == 'auto' else 0.6
+                
+                if dist < semantic_threshold or target.lower() in doc_text.lower():
+                    memory_system.collection.delete(ids=[mem_id])
+                    deleted_count += 1
+                    report.append(f"✅ Sweep: Forgot derived fact: '{doc_text[:40]}...'")
+            
+    except Exception as e: report.append(f"⚠️ Vector Error: {e}")
 
-    return "\n".join(report) if report else f"No match for '{target}'."
+    # 3. Profile Memory Cleanup
+    if profile_memory:
+        try:
+            # Naive attempt to map "Forget my location" -> location
+            # If target is specific "Forget London", we search the profile
+            data = profile_memory.load()
+            found_key = False
+            for cat, subdata in data.items():
+                if isinstance(subdata, dict):
+                    for k, v in list(subdata.items()): # list() for safe deletion during iteration
+                        if target.lower() in k.lower() or target.lower() in str(v).lower():
+                            profile_memory.delete(cat, k)
+                            report.append(f"✅ Profile: Removed {cat}.{k}")
+                            found_key = True
+            
+            if not found_key and " " not in target:
+                 # usage: forget category key
+                 pass
+        except Exception as e: report.append(f"⚠️ Profile Error: {e}")
+
+    return "\n".join(report) if report else f"No matching memory found for '{target}'."
 
 async def tool_scratchpad(action: str, scratchpad: Scratchpad, key: str = None, value: str = None):
-    icon = Icons.MEM_SAVE if action == "set" else Icons.MEM_READ
-    log_title = f"Variable {action.upper()}"
+    icon = Icons.MEM_SCRATCH
+    log_title = f"Scratch {action.upper()}"
     log_content = f"{key} = {value}" if value else key
     pretty_log(log_title, log_content, icon=icon)
     if action == "set":
@@ -166,6 +254,8 @@ async def tool_scratchpad(action: str, scratchpad: Scratchpad, key: str = None, 
         return f"{key} = {val}" if val else f"Error: '{key}' not found."
     elif action == "list":
         return scratchpad.list_all()
+    elif action == "clear":
+        return scratchpad.clear()
     return "Error: Unknown action"
 
 async def tool_update_profile(category: str, key: str, value: str, profile_memory, memory_system):
@@ -191,7 +281,7 @@ async def tool_knowledge_base(action: str, sandbox_dir: Path, memory_system, scr
 
     elif action == "forget":
 
-        return await tool_unified_forget(target, sandbox_dir, memory_system)
+        return await tool_unified_forget(target, sandbox_dir, memory_system, profile_memory)
 
     elif action == "list_docs":
 

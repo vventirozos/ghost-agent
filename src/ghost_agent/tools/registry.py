@@ -8,8 +8,8 @@ from .execute import tool_execute
 
 TOOL_DEFINITIONS = [
     {"type": "function", "function": {"name": "system_utility", "description": "System Tools & Weather. Use this to check the time, server health, user location, or get the weather for ANY specific city (e.g. 'Tokyo').", "parameters": {"type": "object", "properties": {"action": {"type": "string", "enum": ["check_time", "check_weather", "check_health", "check_location"]}, "location": {"type": "string", "description": "Required ONLY for 'check_weather'. Specify the city name (e.g., 'Paris'). Leave empty for local weather."}}, "required": ["action"]}}},
-    {"type": "function", "function": {"name": "save_variable", "description": "Save a variable (key, value) to WORKING MEMORY.", "parameters": {"type": "object", "properties": {"key": {"type": "string"}, "value": {"type": "string"}}, "required": ["key", "value"]}}},
-    {"type": "function", "function": {"name": "read_variable", "description": "Read a variable from WORKING MEMORY.", "parameters": {"type": "object", "properties": {"key": {"type": "string"}}, "required": ["key"]}}},
+    {"type": "function", "function": {"name": "save_to_scrapbook", "description": "Save a piece of information (key, value) to your SCRAPBOOK. This persists across multiple turns and is perfect for storing calculated results, filenames, or IDs.", "parameters": {"type": "object", "properties": {"key": {"type": "string"}, "value": {"type": "string"}}, "required": ["key", "value"]}}},
+    {"type": "function", "function": {"name": "read_from_scrapbook", "description": "Read a value from your SCRAPBOOK.", "parameters": {"type": "object", "properties": {"key": {"type": "string"}}, "required": ["key"]}}},
     {"type": "function", "function": {"name": "write_file", "description": "Create a local file (name, content).", "parameters": {"type": "object", "properties": {"filename": {"type": "string"}, "content": {"type": "string"}}, "required": ["filename", "content"]}}},
     {"type": "function", "function": {"name": "read_file", "description": "Read a local file.", "parameters": {"type": "object", "properties": {"filename": {"type": "string"}}, "required": ["filename"]}}},
     {"type": "function", "function": {"name": "list_files", "description": "Show the recursive tree of all files in the sandbox.", "parameters": {"type": "object", "properties": {}}}},
@@ -22,14 +22,14 @@ TOOL_DEFINITIONS = [
     {"type": "function", "function": {"name": "web_search", "description": "QUICK Information Lookup. Use this for simple facts, dates, or specific entity checks.", "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}},
     {"type": "function", "function": {"name": "deep_research", "description": "DEEP Web Analysis. Reads full articles and content from multiple sources.", "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}},
     {"type": "function", "function": {"name": "fact_check", "description": "MANDATORY for verification. Use this tool whenever the user asks to 'fact check' or 'verify' something.", "parameters": {"type": "object", "properties": {"statement": {"type": "string"}}, "required": ["statement"]}}},
-    {"type": "function", "function": {"name": "forget", "description": "PERMANENTLY DELETE a memory or file. YOU MUST USE THIS TOOL if the user asks to 'forget' or 'delete' something.", "parameters": {"type": "object", "properties": {"target": {"type": "string", "description": "Filename or fact to forget"}}, "required": ["target"]}}},
+    {"type": "function", "function": {"name": "forget", "description": "Delete a memory or file if explicitly requested by the user.", "parameters": {"type": "object", "properties": {"target": {"type": "string", "description": "The filename or fact to remove"}}, "required": ["target"]}}},
     {"type": "function", "function": {"name": "manage_tasks", "description": "ADMINISTRATIVE TOOL. Usage: Creates background jobs that run automatically in the future. Use ONLY for scheduling.", "parameters": {"type": "object", "properties": {"action": {"type": "string", "enum": ["create", "list", "stop", "stop_all"]}, "task_name": {"type": "string"}, "cron_expression": {"type": "string"}, "prompt": {"type": "string"}}, "required": ["action"]}}}
 ]
 
 def get_available_tools(context):
     return {
-        "save_variable": lambda **kwargs: tool_scratchpad(action="set", scratchpad=context.scratchpad, **kwargs),
-        "read_variable": lambda **kwargs: tool_scratchpad(action="get", scratchpad=context.scratchpad, **kwargs),
+        "save_to_scrapbook": lambda **kwargs: tool_scratchpad(action="set", scratchpad=context.scratchpad, **kwargs),
+        "read_from_scrapbook": lambda **kwargs: tool_scratchpad(action="get", scratchpad=context.scratchpad, **kwargs),
         "write_file": lambda **kwargs: tool_write_file(sandbox_dir=context.sandbox_dir, **kwargs),
         "read_file": lambda **kwargs: tool_read_file(sandbox_dir=context.sandbox_dir, **kwargs),
         "download_file": lambda **kwargs: tool_download_file(sandbox_dir=context.sandbox_dir, tor_proxy=context.tor_proxy, **kwargs),
@@ -37,12 +37,12 @@ def get_available_tools(context):
         "inspect_file": lambda **kwargs: tool_inspect_file(sandbox_dir=context.sandbox_dir, **kwargs),
         "knowledge_base": lambda **kwargs: tool_knowledge_base(sandbox_dir=context.sandbox_dir, memory_system=context.memory_system, scratchpad=context.scratchpad, profile_memory=context.profile_memory, **kwargs),
         "recall": lambda **kwargs: tool_recall(memory_system=context.memory_system, **kwargs),
-        "execute": lambda **kwargs: tool_execute(sandbox_dir=context.sandbox_dir, sandbox_manager=context.sandbox_manager, **kwargs),
+        "execute": lambda **kwargs: tool_execute(sandbox_dir=context.sandbox_dir, sandbox_manager=context.sandbox_manager, scrapbook=context.scratchpad, **kwargs),
         "web_search": lambda **kwargs: tool_search(anonymous=context.args.anonymous, tor_proxy=context.tor_proxy, **kwargs),
-        "deep_research": lambda **kwargs: tool_deep_research(anonymous=context.args.anonymous, tor_proxy=context.tor_proxy, **kwargs),
+        "deep_research": lambda **kwargs: tool_deep_research(anonymous=context.args.anonymous, tor_proxy=context.tor_proxy, **qa if (qa := kwargs.pop("qa", None)) else kwargs),
         "fact_check": lambda **kwargs: tool_fact_check(http_client=context.llm_client.http_client, tool_definitions=TOOL_DEFINITIONS, deep_research_callable=lambda **qa: tool_deep_research(anonymous=context.args.anonymous, tor_proxy=context.tor_proxy, **qa), **kwargs),
         "system_utility": lambda **kwargs: tool_system_utility(tor_proxy=context.tor_proxy, profile_memory=context.profile_memory, **kwargs),
         "system_health_check": lambda **kwargs: tool_system_health(upstream_url=context.args.upstream_url, http_client=context.llm_client.http_client, sandbox_manager=context.sandbox_manager, memory_system=context.memory_system),
-        "forget": lambda **kwargs: tool_unified_forget(sandbox_dir=context.sandbox_dir, memory_system=context.memory_system, **kwargs),
+        "forget": lambda **kwargs: tool_unified_forget(sandbox_dir=context.sandbox_dir, memory_system=context.memory_system, profile_memory=context.profile_memory, **kwargs),
         "manage_tasks": lambda **kwargs: tool_manage_tasks(scheduler=context.scheduler, memory_system=context.memory_system, **kwargs),
     }

@@ -49,6 +49,21 @@ class ProfileMemory:
         self.save(data)
         return f"Synchronized: {cat}.{target_key} = {v}"
 
+    def delete(self, category: str, key: str) -> str:
+        data = self.load()
+        cat = str(category).strip().lower()
+        k = str(key).strip().lower()
+
+        if cat in data and k in data[cat]:
+            del data[cat][k]
+            # Clean up empty categories
+            if not data[cat]:
+                del data[cat]
+            self.save(data)
+            return f"Removed from Profile: {cat}.{k}"
+        
+        return f"Profile key not found: {cat}.{k}"
+
     def get_context_string(self) -> str:
         data = self.load()
         lines = []

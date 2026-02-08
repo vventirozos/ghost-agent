@@ -7,10 +7,15 @@ import httpx
 from ..utils.logging import Icons, pretty_log
 
 async def tool_read_file(filename: str, sandbox_dir: Path):
-    pretty_log("Reading File", filename, icon=Icons.TOOL_FILE_R)
-    # GUARD: Stop model from trying to read URLs as files
+    pretty_log("File Read", filename, icon=Icons.TOOL_FILE_R)
+    # GUARD 1: Stop model from trying to read URLs as files
     if str(filename).startswith("http"):
         return "Error: You are trying to use read_file on a URL. Use knowledge_base(action='ingest_document') instead."
+    
+    # GUARD 2: PDF files must be handled by the knowledge base
+    if str(filename).lower().endswith(".pdf"):
+        return f"Error: '{filename}' is a PDF. You cannot use read_file on PDFs. Use knowledge_base(action='recall', content='query') or knowledge_base(action='ingest_document') instead."
+
     try:
         # STRIP LEADING SLASH to prevent absolute path escapes
         path = sandbox_dir / str(filename).lstrip("/")
@@ -20,18 +25,18 @@ async def tool_read_file(filename: str, sandbox_dir: Path):
     except Exception as e: return f"Error: {e}"
 
 async def tool_write_file(filename: str, content: str, sandbox_dir: Path):
-    pretty_log("Writing File", filename, icon=Icons.TOOL_FILE_W)
+    pretty_log("File Write", filename, icon=Icons.TOOL_FILE_W)
     try:
         # STRIP LEADING SLASH to prevent absolute path escapes
         path = sandbox_dir / str(filename).lstrip("/")
         # SELF-HEALING: Auto-create parent directories
         path.parent.mkdir(parents=True, exist_ok=True)
         await asyncio.to_thread(path.write_text, content)
-        return f"Successfully wrote {len(content)} bytes to {filename}."
+        return f"SUCCESS: Wrote to '{filename}'."
     except Exception as e: return f"Error: {e}"
 
 async def tool_list_files(sandbox_dir: Path, memory_system=None):
-    pretty_log("Sandbox Scan", "Generating Recursive Tree", icon=Icons.TOOL_FILE_I)
+    pretty_log("Sandbox Tree", "Scanning directories", icon=Icons.TOOL_FILE_I)
     try:
         tree = []
         for path in sorted(sandbox_dir.rglob("*")):
@@ -68,7 +73,7 @@ async def tool_download_file(url: str, sandbox_dir: Path, tor_proxy: str, filena
                     async for chunk in resp.aiter_bytes():
                         f.write(chunk)
                         sha256.update(chunk)
-        return f"Downloaded {filename} ({target_path.stat().st_size} bytes)."
+        return f"SUCCESS: Downloaded '{filename}'."
     except Exception as e: return f"Error: {e}"
 
 async def tool_file_search(pattern: str, sandbox_dir: Path, filename: str = None):
@@ -82,7 +87,7 @@ async def tool_file_search(pattern: str, sandbox_dir: Path, filename: str = None
     pattern = str(pattern).strip("'\"") # Strip accidental quotes
     
     search_root = (sandbox_dir / filename) if filename else sandbox_dir
-    pretty_log("File Search", f"'{pattern}' in {search_root.relative_to(sandbox_dir)}/", icon=Icons.TOOL_FILE_S)
+    pretty_log("File Search", f"'{pattern}' in {search_root.name}/", icon=Icons.TOOL_FILE_S)
     
     try:
         results = []
@@ -107,7 +112,7 @@ async def tool_file_search(pattern: str, sandbox_dir: Path, filename: str = None
 
 async def tool_inspect_file(filename: str, sandbox_dir: Path, lines: int = 10):
     if not filename: return "Error: 'path' (filename) is required for inspection."
-    pretty_log("File Inspection", filename, icon=Icons.TOOL_FILE_I)
+    pretty_log("File Peek", filename, icon=Icons.TOOL_FILE_I)
     try:
         path = sandbox_dir / str(filename).lstrip("/")
         if not path.exists(): return f"Error: '{filename}' not found."

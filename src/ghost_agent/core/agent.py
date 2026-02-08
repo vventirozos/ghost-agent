@@ -27,12 +27,23 @@ class GhostContext:
         self.scratchpad = None
         self.sandbox_manager = None
         self.scheduler = None
+        self.last_activity_time = datetime.datetime.now()
 
 class GhostAgent:
     def __init__(self, context: GhostContext):
         self.context = context
         self.available_tools = get_available_tools(context)
         self.agent_semaphore = asyncio.Semaphore(1)
+
+    def clear_session(self):
+        """
+        Hard reset of the agent's volatile memory.
+        """
+        pretty_log("Session Reset", "Clearing context and working memory", icon=Icons.MEM_WIPE)
+        if hasattr(self.context, 'scratchpad') and self.context.scratchpad:
+            self.context.scratchpad.clear()
+        # Return a fresh system prompt for the next turn
+        return True
 
     def process_rolling_window(self, messages: List[Dict[str, Any]], max_tokens: int) -> List[Dict[str, Any]]:
         if not messages: return []
@@ -61,6 +72,21 @@ class GhostAgent:
     async def run_smart_memory_task(self, interaction_context: str, model_name: str, selectivity: float):
         if not self.context.memory_system: return
         interaction_context = interaction_context.replace("\r", "")
+        
+        # PRE-FILTER: Do not store facts if the user was just asking for a summary or recall
+        # This prevents "Ghost Memory" from document summaries
+        ic_lower = interaction_context.lower()
+        ic_parts = ic_lower.split("ai:")
+        user_msg = ic_parts[0] if len(ic_parts) > 0 else ""
+        ai_msg = ic_parts[1] if len(ic_parts) > 1 else ""
+        
+        summary_triggers = ["summarize", "summary", "recall", "tell me about", "what is", "recap", "forget", "list documents"]
+        is_requesting_summary = any(w in user_msg for w in summary_triggers)
+        
+        if is_requesting_summary and len(ai_msg) > 500:
+            # Large AI responses to summary/forget requests are likely "Ghost Memory" candidates
+            return
+
         final_prompt = SMART_MEMORY_PROMPT + f"\n{interaction_context}"
         try:
             payload = {"model": model_name, "messages": [{"role": "user", "content": final_prompt}], "stream": False, "temperature": 0.1, "response_format": {"type": "json_object"}}
@@ -68,10 +94,24 @@ class GhostAgent:
             content = data["choices"][0]["message"]["content"]
             result_json = json.loads(content.replace("```json", "").replace("```", "").strip())
             score, fact, profile_up = float(result_json.get("score", 0.0)), result_json.get("fact", ""), result_json.get("profile_update", None)
-            if score >= selectivity and fact and len(fact) <= 200 and len(fact) >= 5 and "none" not in fact.lower():
+            
+            # --- AGGRESSIVE SELECTIVITY FILTER ---
+            # Even if the LLM gives it a high score, we do a sanity check.
+            # Identity facts MUST contain references to the user.
+            # Project facts MUST contain references to files, code, or local context.
+            fact_lc = fact.lower()
+            is_personal = any(w in fact_lc for w in ["user", "me", "my ", " i ", "identity", "preference", "like"])
+            is_technical = any(w in fact_lc for w in ["file", "path", "code", "error", "script", "project", "repo", "build", "library", "version"])
+            
+            if score >= selectivity and fact and len(fact) <= 200 and len(fact) >= 5 and "none" not in fact_lc:
+                # Discard high scores for facts that are clearly general knowledge (not personal, not technical)
+                if score >= 0.9 and not (is_personal or is_technical):
+                    pretty_log("Auto Memory Skip", f"Discarded generic knowledge: {fact}", icon=Icons.STOP)
+                    return
+
                 memory_type = "identity" if (score >= 0.9 and profile_up) else "auto"
                 await asyncio.to_thread(self.context.memory_system.smart_update, fact, memory_type)
-                pretty_log(f"Auto Memory Store [{score:.2f}]", fact, icon=Icons.MEM_SAVE)
+                pretty_log("Auto Memory Store", f"[{score:.2f}] {fact}", icon=Icons.MEM_SAVE)
                 if memory_type == "identity" and self.context.profile_memory:
                     self.context.profile_memory.update(profile_up.get("category", "notes"), profile_up.get("key", "info"), profile_up.get("value", fact))
         except Exception as e: logger.error(f"Smart memory task failed: {e}")
@@ -79,6 +119,7 @@ class GhostAgent:
     async def handle_chat(self, body: Dict[str, Any], background_tasks):
         req_id = str(uuid.uuid4())[:8]
         token = request_id_context.set(req_id)
+        self.context.last_activity_time = datetime.datetime.now()
         try:
             async with self.agent_semaphore:
                 pretty_log("Request Initialized", special_marker="BEGIN")
@@ -92,7 +133,7 @@ class GhostAgent:
                 
                 # VERBATIM INTENT DETECTION FROM ORIGINAL SCRIPT
                 coding_keywords = ["python", "bash", "sh", "script", "code", "def ", "import "]
-                coding_actions = ["write", "run", "execute", "debug", "fix", "create", "generate"] # Removed 'count' to prevent math loops
+                coding_actions = ["write", "run", "execute", "debug", "fix", "create", "generate", "count", "calculate", "analyze", "scrape", "plot", "graph"]
                 has_coding_intent = False
                 if any(k in lc for k in coding_keywords):
                     if any(a in lc for a in coding_actions): has_coding_intent = True
@@ -108,18 +149,14 @@ class GhostAgent:
                 profile_context = profile_context.replace("\r", "")
 
                 # Working Memory Injection (Deterministic Persistence)
-                scratch_data = self.context.scratchpad.list_all() if hasattr(self.context, 'scratchpad') else ""
-                working_memory_context = f"\n\n### WORKING MEMORY (Saved Variables for Code):\n{scratch_data}\n\n" if scratch_data and "empty" not in scratch_data.lower() else ""
+                # We show this even if empty so the LLM knows the capability exists
+                scratch_data = self.context.scratchpad.list_all() if hasattr(self.context, 'scratchpad') else "None."
+                working_memory_context = f"\n\n### SCRAPBOOK (Persistent Data):\n{scratch_data}\n\n"
 
                 if has_coding_intent:
                     base_prompt, current_temp = CODE_SYSTEM_PROMPT, 0.2
-                    pretty_log("Strategy Switch", "Activated: Python Specialist Mode", level="INFO", icon=Icons.TOOL_CODE)
+                    pretty_log("Mode Switch", "Python Specialist Activated", icon=Icons.TOOL_CODE)
                     if profile_context: base_prompt += f"\n\nUSER CONTEXT (For variable naming only):\n{profile_context}"
-                    
-                    # AUTO-EYES: Always show the sandbox tree to the Python Specialist
-                    from ..tools.file_system import tool_list_files
-                    sandbox_state = await tool_list_files(self.context.sandbox_dir, self.context.memory_system)
-                    base_prompt += f"\n\n### CURRENT SANDBOX STATE (Eyes-On):\n{sandbox_state}\n"
                 else:
                     base_prompt, current_temp = SYSTEM_PROMPT.replace("{{PROFILE}}", profile_context), self.context.args.temperature
                 
@@ -141,37 +178,84 @@ class GhostAgent:
                 is_trivial = any(t in last_user_content.lower() for t in trivial_triggers)
 
                 # ONLY inject memory if it's a general chat, NOT trivial, and NOT a fact check
+                # Tighten injection: Only trigger on explicit "previous" or "remember" requests when in coding mode
                 should_fetch_memory = (
                     not is_fact_check and 
                     not is_trivial and
-                    (not has_coding_intent or "remember" in last_user_content or "previous" in last_user_content or "recall" in last_user_content)
+                    (not has_coding_intent or "remember" in last_user_content or "previous" in last_user_content)
                 )
 
                 if self.context.memory_system and last_user_content and should_fetch_memory:
                     mem_context = self.context.memory_system.search(last_user_content)
                     if mem_context:
                         mem_context = mem_context.replace("\r", "")
-                        pretty_log("Memory Injection", f"Retrieved context for: {last_user_content[:30]}...", icon=Icons.BRAIN_CTX)
+                        pretty_log("Memory Context", f"Retrieved for: {last_user_content}", icon=Icons.BRAIN_CTX)
                         messages.insert(1, {"role": "system", "content": f"[MEMORY CONTEXT]:\n{mem_context}"})
                 
+                # PHYSICAL PRUNING: We now physically truncate the message list to save RAM
+                # process_rolling_window returns the trimmed list
                 messages = self.process_rolling_window(messages, self.context.args.max_context)
+                
                 final_ai_content, created_time = "", int(datetime.datetime.now().timestamp())
                 force_stop, seen_tools, tool_usage, last_was_failure = False, set(), {}, False
                 execution_failure_count = 0
                 tools_run_this_turn = []
+                forget_was_called = False
 
                 for turn in range(20):
                     if force_stop: break
                     
-                    # --- A. DYNAMIC TEMPERATURE (ERROR RECOVERY) ---
+                    # --- A. DYNAMIC EYES & MEMORY (REAL-TIME CONTEXT) ---
+                    # Always refresh Sandbox and Scrapbook state at turn start
+                    scratch_data = self.context.scratchpad.list_all() if hasattr(self.context, 'scratchpad') else "None."
+                    
+                    if has_coding_intent:
+                        from ..tools.file_system import tool_list_files
+                        sandbox_state = await tool_list_files(self.context.sandbox_dir, self.context.memory_system)
+                        
+                        for m in messages:
+                            if m.get("role") == "system":
+                                # Update Sandbox
+                                content = re.sub(r'\n### CURRENT SANDBOX STATE \(Eyes-On\):.*?\n\n', '\n', m["content"], flags=re.DOTALL)
+                                content += f"\n### CURRENT SANDBOX STATE (Eyes-On):\n{sandbox_state}\n\n"
+                                # Update Scrapbook
+                                content = re.sub(r'\n### SCRAPBOOK \(Persistent Data\):.*?\n\n', '\n', content, flags=re.DOTALL)
+                                content += f"\n### SCRAPBOOK (Persistent Data):\n{scratch_data}\n\n"
+                                m["content"] = content
+                                break
+                    else:
+                        # For non-coding mode, just refresh the Scrapbook
+                        for m in messages:
+                            if m.get("role") == "system":
+                                m["content"] = re.sub(r'\n### SCRAPBOOK \(Persistent Data\):.*?\n\n', '\n', m["content"], flags=re.DOTALL)
+                                m["content"] += f"\n### SCRAPBOOK (Persistent Data):\n{scratch_data}\n\n"
+                                break
+
+                    # --- B. DYNAMIC TEMPERATURE (ERROR RECOVERY) ---
                     if last_was_failure:
-                        boost = 0.3 if has_coding_intent else 0.2
-                        active_temp = min(current_temp + boost, 0.95)
+                        # Aggressive scaling for execution strikes: 0.20 -> 0.50 -> 0.70
+                        if execution_failure_count == 1:
+                            active_temp = max(current_temp, 0.50)
+                        elif execution_failure_count >= 2:
+                            active_temp = max(current_temp, 0.70)
+                        else:
+                            # General tool failure (non-execution)
+                            active_temp = min(current_temp + 0.3, 0.95)
+                        
                         pretty_log("Brainstorming", f"Increasing variance to {active_temp:.2f} to solve error", icon=Icons.IDEA)
                     else:
                         active_temp = current_temp
 
-                    payload = {"model": model, "messages": messages, "stream": False, "tools": TOOL_DEFINITIONS, "tool_choice": "auto", "temperature": active_temp, "frequency_penalty": 0.5}
+                    payload = {
+                        "model": model, 
+                        "messages": messages, 
+                        "stream": False, 
+                        "tools": TOOL_DEFINITIONS, 
+                        "tool_choice": "auto", 
+                        "temperature": active_temp, 
+                        "frequency_penalty": 0.5,
+                        "max_tokens": 4096 # Allow for full script generation
+                    }
                     pretty_log("LLM Request", f"Turn {turn+1} | Temp {active_temp:.2f}", icon=Icons.LLM_ASK)
                     data = await self.context.llm_client.chat_completion(payload)
                     msg = data["choices"][0]["message"]
@@ -183,7 +267,8 @@ class GhostAgent:
                         msg["content"] = content
                     
                     if not tool_calls:
-                        if self.context.args.smart_memory > 0.0 and last_user_content:
+                        # SKIP Smart Memory if we just performed a 'forget' operation OR if the turn was a failure
+                        if self.context.args.smart_memory > 0.0 and last_user_content and not forget_was_called and not last_was_failure:
                             background_tasks.add_task(self.run_smart_memory_task, f"User: {last_user_content}\nAI: {final_ai_content}", model, self.context.args.smart_memory)
                         break
                     
@@ -196,18 +281,33 @@ class GhostAgent:
                         fname = tool["function"]["name"]
                         tool_usage[fname] = tool_usage.get(fname, 0) + 1
                         
+                        # Detect forget operation to block smart memory re-learning
+                        if fname == "forget":
+                            forget_was_called = True
+                        elif fname == "knowledge_base":
+                            try:
+                                args = json.loads(tool["function"]["arguments"])
+                                if args.get("action") == "forget":
+                                    forget_was_called = True
+                            except: pass
+
                         # Increased limits: 20 for execution, 10 for other hubs
                         if tool_usage[fname] > (20 if fname == "execute" else 10):
-                            pretty_log("Loop Breaker", f"Halted tool overuse: {fname}", icon=Icons.STOP)
+                            pretty_log("Loop Breaker", f"Halted overuse: {fname}", icon=Icons.STOP)
                             messages.append({"role": "system", "content": f"SYSTEM: Tool '{fname}' used too many times."})
                             force_stop = True; break
                         try:
                             t_args = json.loads(tool["function"]["arguments"])
                             a_hash = f"{fname}:{json.dumps(t_args, sort_keys=True)}"
                         except: t_args, a_hash = {}, f"{fname}:error"
-                        if a_hash in seen_tools and fname != "execute":
+                        
+                        # EXEMPT state-querying tools from redundancy check
+                        # This allows listing files multiple times to confirm changes.
+                        is_state_tool = fname in ["file_system", "knowledge_base", "web_search", "recall", "list_files", "system_utility", "inspect_file", "manage_tasks"]
+                        
+                        if a_hash in seen_tools and fname != "execute" and not is_state_tool:
                             redundancy_strikes += 1
-                            pretty_log("Redundancy", f"Blocked duplicate call: {fname}", icon=Icons.RETRY)
+                            pretty_log("Redundancy", f"Blocked duplicate: {fname}", icon=Icons.RETRY)
                             messages.append({"role": "tool", "tool_call_id": tool["id"], "name": fname, "content": "SYSTEM MONITOR: Already executed. Move to next step."})
                             if redundancy_strikes >= 3: force_stop = True
                             last_was_failure = True; continue
@@ -238,14 +338,14 @@ class GhostAgent:
                                     if "STDOUT/STDERR:" in str_res:
                                         error_preview = str_res.split("STDOUT/STDERR:")[1].strip()[:50].replace("\n", " ")
                                     
-                                    pretty_log("Exec Failure", f"Strike {execution_failure_count}/3 -> {error_preview}...", icon=Icons.FAIL)
+                                    pretty_log("Execution Fail", f"Strike {execution_failure_count}/3 -> {error_preview}", icon=Icons.FAIL)
                                     from ..tools.file_system import tool_list_files
                                     sandbox_state = await tool_list_files(self.context.sandbox_dir, self.context.memory_system)
                                     messages.append({"role": "system", "content": f"AUTO-DIAGNOSTIC: The script failed. SANDBOX TREE:\n{sandbox_state}"})
                                     if execution_failure_count >= 3: force_stop = True
                                 else:
                                     execution_failure_count = 0
-                                    pretty_log("Exec Success", "Script completed with exit code 0", icon=Icons.OK)
+                                    pretty_log("Execution Ok", "Script completed with exit code 0", icon=Icons.OK)
                                     force_stop = True
                             
                             elif str_res.startswith("Error:") or str_res.startswith("Critical Tool Error"):
@@ -253,7 +353,7 @@ class GhostAgent:
                                 if not force_stop: 
                                     # Show the specific error in the log title for better transparency
                                     error_preview = str_res.replace("Error:", "").strip()[:50]
-                                    pretty_log("Tool Alert", f"{fname} -> {error_preview}...", icon=Icons.WARN)
+                                    pretty_log("Tool Warning", f"{fname} -> {error_preview}", icon=Icons.WARN)
                             
                             if fname in ["manage_tasks"] and "SUCCESS" in str_res: force_stop = True
                 

@@ -48,7 +48,7 @@ async def lifespan(app):
     
     context.llm_client = LLMClient(args.upstream_url)
     
-    pretty_log("System Boot", "Starting initialization sequence...", icon=Icons.SYSTEM_BOOT)
+    pretty_log("System Boot", "Initializing components", icon=Icons.SYSTEM_BOOT)
 
     if importlib.util.find_spec("docker"):
         try:
@@ -67,7 +67,7 @@ async def lifespan(app):
             context.memory_system = VectorMemory(context.memory_dir, args.upstream_url)
             if context.memory_system.collection:
                 count = context.memory_system.collection.count()
-                pretty_log(f"Memory Ready: {count} fragments indexed", icon=Icons.MEM_READ)
+                pretty_log("Memory Ready", f"{count} fragments indexed", icon=Icons.MEM_READ)
             else:
                 pretty_log("Memory Offline", "Collection not loaded", level="WARNING", icon=Icons.WARN)
         except Exception as e:
@@ -81,9 +81,25 @@ async def lifespan(app):
     agent = GhostAgent(context)
     app.state.agent = agent
     
+    # --- IDLE MONITORING TASK ---
+    async def idle_monitor():
+        while True:
+            await asyncio.sleep(60) # Check every minute
+            elapsed = (datetime.datetime.now() - context.last_activity_time).total_seconds()
+            if elapsed >= 300: # 5 Minutes
+                # Reset activity time so we don't clear repeatedly
+                context.last_activity_time = datetime.datetime.now()
+                agent.clear_session()
+                # Also notify any external state managers if needed
+                from .api.routes import clear_global_history
+                clear_global_history()
+
+    monitor_task = asyncio.create_task(idle_monitor())
+    # ----------------------------
+    
     # Real proactive task runner
     async def proactive_runner(task_id, prompt):
-        pretty_log("Proactive Pulse", f"Task ID: {task_id}", icon=Icons.SYSTEM_BOOT)
+        pretty_log("Proactive Run", f"Task: {task_id}", icon=Icons.BRAIN_PLAN)
         payload = {
             "model": "ghost-agent",
             "messages": [
@@ -105,9 +121,9 @@ async def lifespan(app):
                     if fname in agent.available_tools:
                         pretty_log("Proactive Tool", fname, icon=Icons.TOOL_CODE)
                         result = await agent.available_tools[fname](**t_args)
-                        pretty_log("Proactive Result", str(result)[:200], icon=Icons.OK)
+                        pretty_log("Proactive Ok", result, icon=Icons.OK)
             else:
-                pretty_log("Proactive Sleep", "No action required", icon=Icons.BRAIN_THINK)
+                pretty_log("Proactive Idle", "No action required", icon=Icons.BRAIN_THINK)
         except Exception as e:
             logger.error(f"Task {task_id} failed: {e}")
 
@@ -115,11 +131,11 @@ async def lifespan(app):
 
     try:
         context.scheduler.start()
-        pretty_log("Scheduler Online", "Persistent jobs loaded", icon=Icons.BRAIN_PLAN)
+        pretty_log("Scheduler Ready", "Jobs loaded", icon=Icons.BRAIN_PLAN)
     except Exception as e:
         pretty_log("Scheduler Error", str(e), level="ERROR", icon=Icons.FAIL)
 
-    pretty_log("System Ready", "Ghost is listening for requests", icon=Icons.SYSTEM_READY)
+    pretty_log("System Ready", "Listening for requests", icon=Icons.SYSTEM_READY)
 
     yield
     

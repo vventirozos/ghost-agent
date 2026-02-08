@@ -6,7 +6,7 @@ import contextvars
 from typing import Any, Optional
 
 request_id_context = contextvars.ContextVar("request_id", default="SYSTEM")
-LOG_TRUNCATE_LIMIT = 300
+LOG_TRUNCATE_LIMIT = 30
 DEBUG_MODE = False 
 
 class Icons:
@@ -46,6 +46,7 @@ class Icons:
     MEM_SPLIT    = "✂️"
     MEM_EMBED    = "🧬"
     MEM_WIPE     = "🧹"
+    MEM_SCRATCH  = "🗒️"
     USER_ID      = "👤"
     
     # --- Status ---
@@ -83,34 +84,32 @@ def pretty_log(title: str, content: Any = None, icon: str = "📝", level: str =
     req_id = request_id_context.get()
     timestamp = datetime.datetime.now().strftime("%H:%M:%S")
 
-    # Fixed-width alignment for the header
-    # [LEVEL] ICON HH:MM:SS - [REQ_ID] TITLE
-    
     if special_marker == "BEGIN":
-        print(f"[{level:5}] {Icons.REQ_START} {timestamp} - [{req_id}] {'='*10} REQUEST STARTED {'='*10}", flush=True)
+        print(f"[{level:5}] {Icons.REQ_START} {timestamp} - [{req_id}] {'='*15} REQUEST STARTED {'='*15}", flush=True)
         return
     if special_marker == "END":
-        print(f"[{level:5}] {Icons.REQ_DONE} {timestamp} - [{req_id}] {'='*10} REQUEST FINISHED {'='*10}", flush=True)
+        print(f"[{level:5}] {Icons.REQ_DONE} {timestamp} - [{req_id}] {'='*15} REQUEST FINISHED {'='*15}", flush=True)
         return
 
-    # Pad title to ensure alignment
-    # We use 25 characters for the title field
-    log_line = f"[{level:5}] {icon} {timestamp} - [{req_id}] {title.upper():<25}"
+    # 1. Title formatting (Upper, fixed width)
+    clean_title = title.upper().replace("_", " ")
+    header = f"[{level:5}] {icon} {timestamp} - [{req_id}] {clean_title:<25}"
     
-    if content is not None and not isinstance(content, (dict, list)):
-        log_line += f" : {str(content)}"
-        print(log_line, flush=True)
+    # 2. Content formatting (Strictly single line, truncated)
+    if content is None:
+        print(header, flush=True)
+        return
+
+    if isinstance(content, (dict, list)):
+        try: content_str = json.dumps(content, default=str).replace("\n", " ")
+        except: content_str = str(content).replace("\n", " ")
     else:
-        print(log_line, flush=True)
-        if content is not None:
-            # Multi-line or complex data
-            try: content_str = json.dumps(content, indent=2, default=str)
-            except: content_str = str(content)
-            
-            logger.debug(f"DETAILS FOR [{req_id}] {title}: {content_str}")
-            if level == "ERROR" or DEBUG_MODE:
-                if len(content_str) > LOG_TRUNCATE_LIMIT:
-                    print(f"      {content_str[:LOG_TRUNCATE_LIMIT]}... [TRUNCATED]", flush=True)
-                else:
-                    indented = "\n".join([f"      {l}" for l in content_str.splitlines()])
-                    print(indented, flush=True)
+        content_str = str(content).replace("\n", " ").replace("\r", "")
+
+    if len(content_str) > LOG_TRUNCATE_LIMIT:
+        content_str = content_str[:LOG_TRUNCATE_LIMIT] + "..."
+
+    print(f"{header} : {content_str}", flush=True)
+    
+    if DEBUG_MODE:
+        logger.debug(f"[{req_id}] {title}: {content}")

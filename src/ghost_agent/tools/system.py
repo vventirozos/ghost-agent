@@ -4,7 +4,7 @@ import httpx
 from ..utils.logging import Icons, pretty_log
 
 async def tool_get_current_time():
-    pretty_log("Tool Call: Get Time", None, icon=Icons.TOOL_FILE_I)
+    pretty_log("System Time", "Querying local time", icon=Icons.TOOL_FILE_I)
     now = datetime.datetime.now()
     return f"Current System Time: {now.strftime('%Y-%m-%d %H:%M:%S')} (Day: {now.strftime('%A')})"
 
@@ -22,7 +22,7 @@ async def tool_get_weather(tor_proxy: str, profile_memory=None, location: str = 
                 pretty_log("Weather", f"Using profile location: {location}", icon=Icons.MEM_MATCH)
         except: pass
 
-    pretty_log("Tool Call: Get Weather", f"Target: {location}", icon=Icons.TOOL_SEARCH)
+    pretty_log("System Weather", f"Location: {location}", icon=Icons.TOOL_SEARCH)
     if not location:
         return "SYSTEM ERROR: No location provided. You MUST specify a city (e.g., 'London') or update your profile."
 
@@ -56,7 +56,7 @@ async def tool_get_weather(tor_proxy: str, profile_memory=None, location: str = 
                         f"Humidity: {curr.get('relative_humidity_2m')}%"
                     )
     except Exception as e:
-        pretty_log("Open-Meteo Failed", f"{e} -> Trying Fallback...", level="WARN")
+        pretty_log("Weather Warn", f"Open-Meteo failed: {e}", level="WARN", icon=Icons.WARN)
 
     try:
         url = f"https://wttr.in/{urllib.parse.quote(location)}?format=3"
@@ -65,7 +65,7 @@ async def tool_get_weather(tor_proxy: str, profile_memory=None, location: str = 
             if resp.status_code == 200 and "<html" not in resp.text.lower():
                 return f"REPORT (Source: wttr.in): {resp.text.strip()}"
     except Exception as e:
-        pretty_log("Wttr.in Failed", str(e), level="ERROR")
+        pretty_log("Weather Error", str(e), level="ERROR", icon=Icons.FAIL)
 
     return "SYSTEM ERROR: Connection failed to all weather providers via Tor."
 
@@ -78,7 +78,7 @@ async def tool_system_utility(action: str, tor_proxy: str, profile_memory=None, 
         return f"Error: Unknown action '{action}'"
 
 async def tool_system_health(upstream_url: str, http_client, sandbox_manager=None, memory_system=None):
-    pretty_log("Tool Call: System Health Check", None, icon=Icons.SYSTEM_READY)
+    pretty_log("System Health", "Running diagnostic", icon=Icons.SYSTEM_READY)
 
     report = ["SYSTEM HEALTH REPORT", "=" * 30]
 

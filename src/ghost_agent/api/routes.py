@@ -13,6 +13,13 @@ router = APIRouter()
 API_KEY_NAME = "X-Ghost-Key"
 api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
 
+def clear_global_history():
+    """
+    Placeholder for stateful history clearing. 
+    Current implementation is stateless (OpenAI-compatible).
+    """
+    return True
+
 def get_agent(request: Request):
     return request.app.state.agent
 

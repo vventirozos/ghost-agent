@@ -79,7 +79,7 @@ class VectorMemory:
                 embedding_function=self.embedding_fn
             )
             
-            pretty_log(f"Memory System: Initialized [{collection_name}] ({self.collection.count()} items)", icon="🧠")
+            pretty_log("Memory System", f"Initialized [{collection_name}] ({self.collection.count()} items)", icon=Icons.SYSTEM_READY)
             
         except Exception as e:
             if "already exists" in str(e) or "Embedding function conflict" in str(e):
@@ -140,7 +140,7 @@ class VectorMemory:
 
         metadata = meta or {"timestamp": get_utc_timestamp(), "type": "auto"}
         self.collection.add(documents=[text], metadatas=[metadata], ids=[mem_id])
-        pretty_log("Memory Stored", text[:100], icon=Icons.MEM_SAVE)
+        pretty_log("Memory Save", text, icon=Icons.MEM_SAVE)
 
     def smart_update(self, text: str, type_label: str = "auto"):
         try:
@@ -151,7 +151,7 @@ class VectorMemory:
 
                 if dist < 0.5:
                     self.collection.delete(ids=[existing_id])
-                    pretty_log("Smart Memory", "Overwriting Old Memory", icon="♻️")
+                    pretty_log("Memory Update", "Replacing existing entry", icon=Icons.RETRY)
 
             self.add(text, {"timestamp": get_utc_timestamp(), "type": type_label})
         except Exception as e:
@@ -170,7 +170,7 @@ class VectorMemory:
                     ids=ids[i:i + batch_size]
                 )
                 if i % 10 == 0:
-                    pretty_log(f"Ingesting {filename}", f"Chunk {i+1}/{len(chunks)}", icon="📚")
+                    pretty_log("Memory Ingest", f"{filename} ({i+1}/{len(chunks)})", icon=Icons.MEM_INGEST)
 
             self._update_library_index(filename, "add")
             return True, f"Successfully ingested {len(chunks)} chunks from {filename}."
@@ -181,12 +181,19 @@ class VectorMemory:
     def search(self, query: str, inject_identity: bool = True):
             try:
                 search_queries = [query]
-                if inject_identity:
+                
+                # CONDITIONAL IDENTITY INJECTION
+                # Only inject identity context if the query actually asks for it.
+                # This prevents "pollution" where asking about Python code retrieves "My name is Bob".
+                identity_triggers = ["who", "my ", " i ", "profile", "preference", "remember"]
+                should_inject_identity = inject_identity and any(t in query.lower() for t in identity_triggers)
+                
+                if should_inject_identity:
                     search_queries.insert(0, "User's profile. User's name. User preferences.")
 
                 results = self.collection.query(
                     query_texts=search_queries,
-                    n_results=10,
+                    n_results=5,
                 )
 
                 candidates = []
@@ -217,13 +224,14 @@ class VectorMemory:
                         )
 
                         if is_name_memory:
-                            threshold = 1.2 
+                            threshold = 1.0  # Tightened from 1.2
                         elif is_summary:
-                            threshold = 0.85
+                            threshold = 0.75 # Tightened from 0.85
                         elif is_identity_batch:
-                            threshold = 0.9 if m_type == 'manual' else 0.75
+                            threshold = 0.8 if m_type == 'manual' else 0.65
                         else:
-                            threshold = 0.85 if m_type == 'manual' else 0.70
+                            # General technical memory needs strict relevance
+                            threshold = 0.65 if m_type == 'manual' else 0.55
 
                         if dist < threshold or is_name_memory or is_summary:
                             priority_score = 1
@@ -244,7 +252,7 @@ class VectorMemory:
                             })
                             seen_docs.add(doc)
 
-                if inject_identity:
+                if should_inject_identity:
                     process_batch(0, is_identity_batch=True)
                     process_batch(1, is_identity_batch=False)
                 else:
@@ -298,7 +306,7 @@ class VectorMemory:
                 return False, f"Best match was '{doc_text}' but score ({dist:.2f}) was too low."
 
             self.collection.delete(ids=[mem_id])
-            pretty_log("Memory Deleted", doc_text, icon="🗑️")
+            pretty_log("Memory Wipe", doc_text, icon=Icons.MEM_WIPE)
             return True, f"Successfully forgot: [[{doc_text}]]"
         except Exception as e:
             return False, f"Error: {e}"

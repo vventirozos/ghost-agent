@@ -11,7 +11,7 @@ def truncate_query(query: str, limit: int = 35) -> str:
 
 async def tool_search_ddgs(query: str, tor_proxy: str):
     # Log with TOR status and truncated query
-    pretty_log(f"DDGS Search [TOR]", truncate_query(query), icon=Icons.TOOL_SEARCH)
+    pretty_log("DDGS Search", query, icon=Icons.TOOL_SEARCH)
     
     def format_search_results(results: List[Dict]) -> str:
         if not results: return "No results found."
@@ -46,7 +46,7 @@ async def tool_search(query: str, anonymous: bool, tor_proxy: str):
     return await tool_search_ddgs(query, tor_proxy)
 
 async def tool_deep_research(query: str, anonymous: bool, tor_proxy: str):
-    pretty_log(f"Deep Research [TOR]", truncate_query(query), icon=Icons.TOOL_DEEP)
+    pretty_log("Deep Research", query, icon=Icons.TOOL_DEEP)
     
     urls = []
     try:
@@ -65,7 +65,7 @@ async def tool_deep_research(query: str, anonymous: bool, tor_proxy: str):
         async with sem:
             # Shorten URL for log
             short_url = (url[:35] + "..") if len(url) > 35 else url
-            pretty_log(f"Parsing [TOR]", short_url, icon=Icons.TOOL_FILE_R)
+            pretty_log("Parsing Data", url, icon=Icons.TOOL_FILE_R)
             text = await helper_fetch_url_content(url)
             # Reduce preview to 2000 chars to keep context lean
             preview = text[:2000] 
@@ -77,7 +77,7 @@ async def tool_deep_research(query: str, anonymous: bool, tor_proxy: str):
     return f"--- DEEP RESEARCH RESULT ---\n{full_report}\n\nSYSTEM INSTRUCTION: Analyze the text above."
 
 async def tool_fact_check(statement: str, http_client, tool_definitions, deep_research_callable: Callable):
-    pretty_log("Fact Check Init", truncate_query(statement), icon=Icons.STOP)
+    pretty_log("Fact Check", statement, icon=Icons.STOP)
     
     allowed_names = ["deep_research"]
     restricted_tools = [t for t in tool_definitions if t["function"]["name"] in allowed_names]
