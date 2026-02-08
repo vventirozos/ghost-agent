@@ -4,6 +4,7 @@ import json
 import logging
 import uuid
 import re
+import gc
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 
@@ -34,6 +35,8 @@ class GhostAgent:
         self.context = context
         self.available_tools = get_available_tools(context)
         self.agent_semaphore = asyncio.Semaphore(1)
+        self.memory_semaphore = asyncio.Semaphore(1) # For background tasks
+        self.request_counter = 0
 
     def clear_session(self):
         """
@@ -42,7 +45,7 @@ class GhostAgent:
         pretty_log("Session Reset", "Clearing context and working memory", icon=Icons.MEM_WIPE)
         if hasattr(self.context, 'scratchpad') and self.context.scratchpad:
             self.context.scratchpad.clear()
-        # Return a fresh system prompt for the next turn
+        gc.collect()
         return True
 
     def process_rolling_window(self, messages: List[Dict[str, Any]], max_tokens: int) -> List[Dict[str, Any]]:
@@ -71,50 +74,51 @@ class GhostAgent:
 
     async def run_smart_memory_task(self, interaction_context: str, model_name: str, selectivity: float):
         if not self.context.memory_system: return
-        interaction_context = interaction_context.replace("\r", "")
-        
-        # PRE-FILTER: Do not store facts if the user was just asking for a summary or recall
-        # This prevents "Ghost Memory" from document summaries
-        ic_lower = interaction_context.lower()
-        ic_parts = ic_lower.split("ai:")
-        user_msg = ic_parts[0] if len(ic_parts) > 0 else ""
-        ai_msg = ic_parts[1] if len(ic_parts) > 1 else ""
-        
-        summary_triggers = ["summarize", "summary", "recall", "tell me about", "what is", "recap", "forget", "list documents"]
-        is_requesting_summary = any(w in user_msg for w in summary_triggers)
-        
-        if is_requesting_summary and len(ai_msg) > 500:
-            # Large AI responses to summary/forget requests are likely "Ghost Memory" candidates
-            return
-
-        final_prompt = SMART_MEMORY_PROMPT + f"\n{interaction_context}"
-        try:
-            payload = {"model": model_name, "messages": [{"role": "user", "content": final_prompt}], "stream": False, "temperature": 0.1, "response_format": {"type": "json_object"}}
-            data = await self.context.llm_client.chat_completion(payload)
-            content = data["choices"][0]["message"]["content"]
-            result_json = json.loads(content.replace("```json", "").replace("```", "").strip())
-            score, fact, profile_up = float(result_json.get("score", 0.0)), result_json.get("fact", ""), result_json.get("profile_update", None)
+        async with self.memory_semaphore:
+            interaction_context = interaction_context.replace("\r", "")
             
-            # --- AGGRESSIVE SELECTIVITY FILTER ---
-            # Even if the LLM gives it a high score, we do a sanity check.
-            # Identity facts MUST contain references to the user.
-            # Project facts MUST contain references to files, code, or local context.
-            fact_lc = fact.lower()
-            is_personal = any(w in fact_lc for w in ["user", "me", "my ", " i ", "identity", "preference", "like"])
-            is_technical = any(w in fact_lc for w in ["file", "path", "code", "error", "script", "project", "repo", "build", "library", "version"])
+            # PRE-FILTER: Do not store facts if the user was just asking for a summary or recall
+            # This prevents "Ghost Memory" from document summaries
+            ic_lower = interaction_context.lower()
+            ic_parts = ic_lower.split("ai:")
+            user_msg = ic_parts[0] if len(ic_parts) > 0 else ""
+            ai_msg = ic_parts[1] if len(ic_parts) > 1 else ""
             
-            if score >= selectivity and fact and len(fact) <= 200 and len(fact) >= 5 and "none" not in fact_lc:
-                # Discard high scores for facts that are clearly general knowledge (not personal, not technical)
-                if score >= 0.9 and not (is_personal or is_technical):
-                    pretty_log("Auto Memory Skip", f"Discarded generic knowledge: {fact}", icon=Icons.STOP)
-                    return
+            summary_triggers = ["summarize", "summary", "recall", "tell me about", "what is", "recap", "forget", "list documents"]
+            is_requesting_summary = any(w in user_msg for w in summary_triggers)
+            
+            if is_requesting_summary and len(ai_msg) > 500:
+                # Large AI responses to summary/forget requests are likely "Ghost Memory" candidates
+                return
 
-                memory_type = "identity" if (score >= 0.9 and profile_up) else "auto"
-                await asyncio.to_thread(self.context.memory_system.smart_update, fact, memory_type)
-                pretty_log("Auto Memory Store", f"[{score:.2f}] {fact}", icon=Icons.MEM_SAVE)
-                if memory_type == "identity" and self.context.profile_memory:
-                    self.context.profile_memory.update(profile_up.get("category", "notes"), profile_up.get("key", "info"), profile_up.get("value", fact))
-        except Exception as e: logger.error(f"Smart memory task failed: {e}")
+            final_prompt = SMART_MEMORY_PROMPT + f"\n{interaction_context}"
+            try:
+                payload = {"model": model_name, "messages": [{"role": "user", "content": final_prompt}], "stream": False, "temperature": 0.1, "response_format": {"type": "json_object"}}
+                data = await self.context.llm_client.chat_completion(payload)
+                content = data["choices"][0]["message"]["content"]
+                result_json = json.loads(content.replace("```json", "").replace("```", "").strip())
+                score, fact, profile_up = float(result_json.get("score", 0.0)), result_json.get("fact", ""), result_json.get("profile_update", None)
+                
+                # --- AGGRESSIVE SELECTIVITY FILTER ---
+                # Even if the LLM gives it a high score, we do a sanity check.
+                # Identity facts MUST contain references to the user.
+                # Project facts MUST contain references to files, code, or local context.
+                fact_lc = fact.lower()
+                is_personal = any(w in fact_lc for w in ["user", "me", "my ", " i ", "identity", "preference", "like"])
+                is_technical = any(w in fact_lc for w in ["file", "path", "code", "error", "script", "project", "repo", "build", "library", "version"])
+                
+                if score >= selectivity and fact and len(fact) <= 200 and len(fact) >= 5 and "none" not in fact_lc:
+                    # Discard high scores for facts that are clearly general knowledge (not personal, not technical)
+                    if score >= 0.9 and not (is_personal or is_technical):
+                        pretty_log("Auto Memory Skip", f"Discarded generic knowledge: {fact}", icon=Icons.STOP)
+                        return
+
+                    memory_type = "identity" if (score >= 0.9 and profile_up) else "auto"
+                    await asyncio.to_thread(self.context.memory_system.smart_update, fact, memory_type)
+                    pretty_log("Auto Memory Store", f"[{score:.2f}] {fact}", icon=Icons.MEM_SAVE)
+                    if memory_type == "identity" and self.context.profile_memory:
+                        self.context.profile_memory.update(profile_up.get("category", "notes"), profile_up.get("key", "info"), profile_up.get("value", fact))
+            except Exception as e: logger.error(f"Smart memory task failed: {e}")
 
     async def handle_chat(self, body: Dict[str, Any], background_tasks):
         req_id = str(uuid.uuid4())[:8]
@@ -125,6 +129,11 @@ class GhostAgent:
                 pretty_log("Request Initialized", special_marker="BEGIN")
                 messages, model, stream_response = body.get("messages", []), body.get("model", "ghost-agent"), body.get("stream", False)
                 
+                # HARD HISTORY TRUNCATION: Prevent client-side history bloat from eating RAM
+                # We physically drop everything older than the last 50 messages at entry
+                if len(messages) > 50:
+                    messages = [m for m in messages if m.get("role") == "system"] + messages[-50:]
+
                 for m in messages:
                     if isinstance(m.get("content"), str): m["content"] = m["content"].replace("\r", "")
 
@@ -360,6 +369,17 @@ class GhostAgent:
                 if not final_ai_content:
                     if tools_run_this_turn: final_ai_content = f"Task completed successfully. Final tool output:\n\n{tools_run_this_turn[-1]['content']}"
                     else: final_ai_content = "Process finished without textual output."
+                
+                # Cleanup volatile objects
+                del tools_run_this_turn
+                del messages
+                
+                # Periodically trigger GC to avoid blocking every single request
+                self.request_counter += 1
+                if self.request_counter >= 10:
+                    gc.collect()
+                    self.request_counter = 0
+                
                 return final_ai_content, created_time, req_id
         finally:
             pretty_log("Request Finished", special_marker="END")
