@@ -267,21 +267,26 @@ async def tool_update_profile(category: str, key: str, value: str, profile_memor
         except: pass
     return f"SUCCESS: Profile updated."
 
-async def tool_knowledge_base(action: str, sandbox_dir: Path, memory_system, scratchpad: Scratchpad = None, profile_memory = None, content: str = None, source: str = None, key: str = None, value: str = None, category: str = None):
+async def tool_learn_skill(task: str, mistake: str, solution: str, skill_memory):
+    if not skill_memory: return "Error: Skill memory not active."
+    skill_memory.learn_lesson(task, mistake, solution)
+    return "SUCCESS: Lesson learned and saved to the Skill Playbook."
 
-    target = content or source
+async def tool_knowledge_base(action: str, sandbox_dir: Path, memory_system, **kwargs):
+    # --- FLEXIBLE PARAMETER MAPPING ---
+    target = kwargs.get("content") or kwargs.get("source") or kwargs.get("filename") or kwargs.get("path")
+    key = kwargs.get("key")
+    value = kwargs.get("value")
+    category = kwargs.get("category")
 
     if action == "insert_fact":
-
         return await tool_remember(target, memory_system)
 
     elif action == "ingest_document":
-
         return await tool_gain_knowledge(target, sandbox_dir, memory_system)
 
     elif action == "forget":
-
-        return await tool_unified_forget(target, sandbox_dir, memory_system, profile_memory)
+        return await tool_unified_forget(target, sandbox_dir, memory_system, kwargs.get("profile_memory"))
 
     elif action == "list_docs":
 

@@ -19,6 +19,7 @@ from .core.llm import LLMClient
 from .memory.vector import VectorMemory
 from .memory.profile import ProfileMemory
 from .memory.scratchpad import Scratchpad
+from .memory.skills import SkillMemory
 from .sandbox.docker import DockerSandbox
 from .utils.logging import setup_logging, pretty_log, Icons
 from .utils.token_counter import load_tokenizer
@@ -176,6 +177,7 @@ def main():
 
     context = GhostContext(args, sandbox_dir, memory_dir, tor_proxy)
     context.scratchpad = Scratchpad()
+    context.skill_memory = SkillMemory(memory_dir)
     
     app = create_app()
     app.router.lifespan_context = lifespan

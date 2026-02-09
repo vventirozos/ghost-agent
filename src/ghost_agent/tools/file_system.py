@@ -2,7 +2,9 @@ import asyncio
 import hashlib
 import os
 import urllib.parse
+import json
 from pathlib import Path
+from typing import Any
 import httpx
 from ..utils.logging import Icons, pretty_log
 
@@ -24,15 +26,24 @@ async def tool_read_file(filename: str, sandbox_dir: Path):
         return content
     except Exception as e: return f"Error: {e}"
 
-async def tool_write_file(filename: str, content: str, sandbox_dir: Path):
+async def tool_write_file(filename: str, content: Any, sandbox_dir: Path):
     pretty_log("File Write", filename, icon=Icons.TOOL_FILE_W)
     try:
+        if content is None or str(content).strip().lower() == "none" or str(content).strip() == "":
+            return f"Error: You are trying to write 'None' or empty data to '{filename}'. This usually means a previous tool (like search) failed. Check your data before writing."
+
+        # Auto-serialize if the LLM sends a JSON object/list instead of a string
+        if isinstance(content, (dict, list)):
+            content = json.dumps(content, indent=2)
+        elif not isinstance(content, str):
+            content = str(content)
+
         # STRIP LEADING SLASH to prevent absolute path escapes
         path = sandbox_dir / str(filename).lstrip("/")
         # SELF-HEALING: Auto-create parent directories
         path.parent.mkdir(parents=True, exist_ok=True)
         await asyncio.to_thread(path.write_text, content)
-        return f"SUCCESS: Wrote to '{filename}'."
+        return f"SUCCESS: Wrote {len(content)} chars to '{filename}'."
     except Exception as e: return f"Error: {e}"
 
 async def tool_list_files(sandbox_dir: Path, memory_system=None):
@@ -60,16 +71,22 @@ async def tool_download_file(url: str, sandbox_dir: Path, tor_proxy: str, filena
     try:
         async with httpx.AsyncClient(proxy=proxy_url, headers=headers, follow_redirects=True, timeout=60.0) as client:
             async with client.stream("GET", url) as resp:
-                if resp.status_code != 200: return f"Error {resp.status_code}"
-                if not filename: filename = os.path.basename(urllib.parse.urlparse(url).path) or "file.dat"
-                target_path = sandbox_dir / os.path.basename(filename)
+                if resp.status_code != 200: return f"Error {resp.status_code} - Failed to download from {url}"
+                
+                # If filename is None, empty, or exactly the URL, extract from URL path
+                if not filename or str(filename).strip() == "" or filename == url:
+                    filename = os.path.basename(urllib.parse.urlparse(url).path) or "file.dat"
+                
+                # Strip leading slash to keep it inside sandbox
+                clean_filename = str(filename).lstrip("/")
+                target_path = sandbox_dir / clean_filename
                 target_path.parent.mkdir(parents=True, exist_ok=True)
-                sha256 = hashlib.sha256()
+                
                 with open(target_path, "wb") as f:
                     async for chunk in resp.aiter_bytes():
                         f.write(chunk)
-                        sha256.update(chunk)
-        return f"SUCCESS: Downloaded '{filename}'."
+                        
+        return f"SUCCESS: Downloaded '{url}' to '{clean_filename}'."
     except Exception as e: return f"Error: {e}"
 
 async def tool_file_search(pattern: str, sandbox_dir: Path, filename: str = None):
@@ -121,13 +138,25 @@ async def tool_inspect_file(filename: str, sandbox_dir: Path, lines: int = 10):
         return "\n".join(content)
     except Exception as e: return f"Error: {e}"
 
-async def tool_file_system(operation: str, sandbox_dir: Path, tor_proxy: str, path: str = None, content: str = None, memory_system=None, **kwargs):
-    if not path and "filename" in kwargs: path = kwargs["filename"]
-    if operation == "list": return await tool_list_files(sandbox_dir, memory_system)
-    if operation == "search": return await tool_file_search(content, sandbox_dir, path)
-    if operation == "inspect": return await tool_inspect_file(path, sandbox_dir)
-    if not path: return "Error: path required"
-    if operation == "read": return await tool_read_file(path, sandbox_dir)
-    if operation == "write": return await tool_write_file(path, content, sandbox_dir)
-    if operation == "download": return await tool_download_file(url=path, sandbox_dir=sandbox_dir, tor_proxy=tor_proxy, filename=content)
-    return "Unknown operation"
+async def tool_file_system(operation: str, sandbox_dir: Path, tor_proxy: str, path: str = None, content: str = None, **kwargs):
+    # Unified mapping for common parameter hallucinations
+    url = kwargs.get("url") or (path if path and str(path).startswith("http") else None)
+    target_path = path or kwargs.get("filename") or kwargs.get("path")
+    final_content = content or kwargs.get("data") or kwargs.get("content")
+
+    if operation == "list": return await tool_list_files(sandbox_dir)
+    if operation == "search": return await tool_file_search(final_content, sandbox_dir, target_path)
+    if operation == "inspect": return await tool_inspect_file(target_path, sandbox_dir)
+    
+    if operation == "download":
+        if not url: return "Error: 'url' parameter is required for download."
+        # If target_path is the same as url, it means the model didn't provide a specific filename
+        final_filename = target_path if target_path != url else (kwargs.get("filename") or kwargs.get("content"))
+        if final_filename == url: final_filename = None
+        return await tool_download_file(url=str(url), sandbox_dir=sandbox_dir, tor_proxy=tor_proxy, filename=final_filename)
+
+    if not target_path: return f"Error: 'path' (filename) is required for {operation}"
+    if operation == "read": return await tool_read_file(target_path, sandbox_dir)
+    if operation == "write": return await tool_write_file(target_path, final_content, sandbox_dir)
+    
+    return f"Unknown operation: {operation}"

@@ -14,7 +14,7 @@ async def tool_search_ddgs(query: str, tor_proxy: str):
     pretty_log("DDGS Search", query, icon=Icons.TOOL_SEARCH)
     
     def format_search_results(results: List[Dict]) -> str:
-        if not results: return "No results found."
+        if not results: return "ERROR: DuckDuckGo returned ZERO results. This usually means the query was too specific or the search engine is blocking the request (CAPTCHA/Tor). TRY A BROADER QUERY."
         formatted = []
         for i, res in enumerate(results, 1):
             title = res.get('title', 'No Title')
@@ -22,9 +22,9 @@ async def tool_search_ddgs(query: str, tor_proxy: str):
             link = res.get('href', res.get('url', '#'))
             formatted.append(f"### {i}. {title}\n{body}\n[Source: {link}]")
         return "\n\n".join(formatted)
-    
+
     if not importlib.util.find_spec("ddgs"):
-        return "Search unavailable (Library 'ddgs' not installed)."
+        return "CRITICAL ERROR: 'ddgs' library is missing. Search is impossible."
 
     from ddgs import DDGS
     for attempt in range(3):
@@ -53,12 +53,22 @@ async def tool_deep_research(query: str, anonymous: bool, tor_proxy: str):
         if importlib.util.find_spec("ddgs"):
             from ddgs import DDGS
             with DDGS(proxy=tor_proxy, timeout=15) as ddgs:
-                results = list(ddgs.text(query, max_results=2))
-                urls = [r.get('href') for r in results]
+                results = list(ddgs.text(query, max_results=5))
+                # FILTER: Skip known junk sites that often appear on Tor blocks
+                junk = ["forums.att.com", "reddit.com", "quora.com", "facebook.com", "twitter.com"]
+                for r in results:
+                    url = r.get('href', '').lower()
+                    if not any(j in url for j in junk):
+                        urls.append(r.get('href'))
+                # If we filtered everything, just take the first result as a fallback
+                if not urls and results:
+                    urls = [results[0].get('href')]
+                # Keep only top 2 high-quality links
+                urls = urls[:2]
     except Exception:
-        return f"Error: Search failed."
+        return f"CRITICAL ERROR: Deep Research search phase failed."
 
-    if not urls: return "Error: No search results found."
+    if not urls: return "ERROR: No search results found. The internet might be blocking your request. Try a different query."
 
     sem = asyncio.Semaphore(2) 
     async def process_url(url):

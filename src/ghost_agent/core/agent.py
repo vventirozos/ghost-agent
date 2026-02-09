@@ -15,6 +15,7 @@ from ..utils.logging import Icons, pretty_log, request_id_context
 from ..utils.token_counter import estimate_tokens
 from ..tools.registry import get_available_tools, TOOL_DEFINITIONS
 from ..tools.tasks import tool_list_tasks
+from ..memory.skills import SkillMemory
 
 logger = logging.getLogger("GhostAgent")
 
@@ -27,6 +28,7 @@ class GhostContext:
         self.llm_client = None
         self.memory_system = None
         self.profile_memory = None
+        self.skill_memory = None
         self.scratchpad = None
         self.sandbox_manager = None
         self.scheduler = None
@@ -71,27 +73,28 @@ class GhostAgent:
         clean_history = []
         seen_tool_outputs = set()
         
-        for msg in raw_history:
+        # We iterate backwards to ensure the MOST RECENT data is always kept
+        for msg in reversed(raw_history):
             role = msg.get("role")
             content = str(msg.get("content", ""))
             
-            # 1. Deduplicate Tool Outputs
+            # 1. Deduplicate Tool Outputs (But keep the newest)
             if role == "tool":
                 tool_name = msg.get('name', 'unknown')
-                # Create a fingerprint of the tool name and first 100 chars of output
                 fingerprint = f"{tool_name}:{content[:100]}"
                 if fingerprint in seen_tool_outputs:
-                    continue # Drop redundant tool output
+                    continue # Drop older redundant output
                 seen_tool_outputs.add(fingerprint)
             
             # 2. Filter Assistant Meta-Chatter
             if role == "assistant":
                 lower_content = content.lower()
-                # Skip messages that are just memory confirmations
                 if "memory has been updated" in lower_content or "memory stored" in lower_content:
                     continue
             
             clean_history.append(msg)
+        
+        clean_history.reverse()
 
         # Context Compression for remaining long tool outputs
         compressed_history = []
@@ -238,19 +241,45 @@ class GhostAgent:
                         pretty_log("Memory Context", f"Retrieved for: {last_user_content}", icon=Icons.BRAIN_CTX)
                         messages.insert(1, {"role": "system", "content": f"[MEMORY CONTEXT]:\n{mem_context}"})
                 
+                # --- DYNAMIC SKILL INJECTION ---
+                if self.context.skill_memory:
+                    playbook = self.context.skill_memory.get_playbook_context()
+                    for m in messages:
+                        if m.get("role") == "system":
+                            m["content"] += f"\n\n{playbook}"
+                            break
+
                 # PHYSICAL PRUNING: We now physically truncate the message list to save RAM
-                # process_rolling_window returns the trimmed list
                 messages = self.process_rolling_window(messages, self.context.args.max_context)
                 
                 final_ai_content, created_time = "", int(datetime.datetime.now().timestamp())
                 force_stop, seen_tools, tool_usage, last_was_failure = False, set(), {}, False
+                raw_tools_called = set() # Track tool names (not fingerprints) for checklist enforcement
                 execution_failure_count = 0
                 tools_run_this_turn = []
                 forget_was_called = False
+                thought_content = "" # Persistent for Checklist Enforcement
 
                 for turn in range(20):
                     if force_stop: break
                     
+                    # --- SYSTEM 2 REASONING LOOP ---
+                    if turn == 0:
+                        reasoning_payload = {
+                            "model": model,
+                            "messages": messages + [{"role": "user", "content": "THINK: Review the objective and lessons. Create a STAMPED CHECKLIST of every single action requested. You MUST execute every item. If the user asks for a 'failure' or 'buggy' step, you MUST comply—do not 'auto-fix' it until the plan says to. Identify 'meta' instructions like learning skills that are easy to skip. Do not use tools yet."}],
+                            "temperature": 0.1,
+                            "max_tokens": 512
+                        }
+                        try:
+                            pretty_log("Reasoning Loop", "Starting System 2 Analysis...", icon="🧠")
+                            r_data = await self.context.llm_client.chat_completion(reasoning_payload)
+                            thought_content = r_data["choices"][0]["message"].get("content", "")
+                            # Inject thought as a LATE system message so it's fresh in 'attention'
+                            messages.append({"role": "system", "content": f"### ACTIVE STRATEGY & CHECKLIST (DO NOT SKIP ANY STEP):\n{thought_content}"})
+                            pretty_log("Reasoning Loop", "Analysis complete", icon=Icons.OK)
+                        except: pass
+
                     # --- A. DYNAMIC EYES & MEMORY (REAL-TIME CONTEXT) ---
                     # Always refresh Sandbox and Scrapbook state at turn start
                     scratch_data = self.context.scratchpad.list_all() if hasattr(self.context, 'scratchpad') else "None."
@@ -326,6 +355,16 @@ class GhostAgent:
                         msg["content"] = content
                     
                     if not tool_calls:
+                        # --- IMPROVED CHECKLIST ENFORCEMENT ---
+                        request_context = (last_user_content + thought_content).lower()
+                        has_meta_intent = any(kw in request_context for kw in ["learn", "skill", "profile", "lesson", "playbook", "record", "save"])
+                        meta_tools_called = any(t in raw_tools_called for t in ["learn_skill", "update_profile"])
+                        
+                        if has_meta_intent and not meta_tools_called and turn < 4:
+                            pretty_log("Checklist Nudge", "Enforcing meta-task compliance", icon="☝️")
+                            messages.append({"role": "system", "content": "CRITICAL: You have not fulfilled the learning/profile instructions in the user's request. You MUST call 'learn_skill' or 'update_profile' now before finishing."})
+                            continue
+
                         # SKIP Smart Memory if we just performed a 'forget' operation OR if the turn was a failure
                         if self.context.args.smart_memory > 0.0 and last_user_content and not forget_was_called and not last_was_failure:
                             background_tasks.add_task(self.run_smart_memory_task, f"User: {last_user_content}\nAI: {final_ai_content}", model, self.context.args.smart_memory)
@@ -338,6 +377,7 @@ class GhostAgent:
                     tool_tasks, tool_call_metadata = [], []
                     for tool in tool_calls:
                         fname = tool["function"]["name"]
+                        raw_tools_called.add(fname)
                         tool_usage[fname] = tool_usage.get(fname, 0) + 1
                         
                         # Detect forget operation to block smart memory re-learning
@@ -405,7 +445,12 @@ class GhostAgent:
                                 else:
                                     execution_failure_count = 0
                                     pretty_log("Execution Ok", "Script completed with exit code 0", icon=Icons.OK)
-                                    force_stop = True
+                                    # If we have meta-tasks pending, DO NOT force stop.
+                                    # The Nudge logic will handle the completion.
+                                    request_context = (last_user_content + thought_content).lower()
+                                    has_meta_intent = any(kw in request_context for kw in ["learn", "skill", "profile", "lesson", "playbook", "record", "save"])
+                                    if not has_meta_intent:
+                                        force_stop = True
                             
                             elif str_res.startswith("Error:") or str_res.startswith("Critical Tool Error"):
                                 last_was_failure = True

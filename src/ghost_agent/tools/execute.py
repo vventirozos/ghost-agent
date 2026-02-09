@@ -11,6 +11,17 @@ from ..utils.logging import Icons, pretty_log
 async def tool_execute(filename: str, content: str, sandbox_dir: Path, sandbox_manager, scrapbook=None, args: List[str] = None):
     # --- 🛡️ HIJACK LAYER: CODE SANITIZATION (Verbatim from Granite4) ---
     
+    # 0. VALIDATION: Ensure we are only executing scripts
+    ext = str(filename).split('.')[-1].lower()
+    if ext not in ["py", "sh", "js"]:
+        pretty_log("Execution Blocked", f"Invalid extension: .{ext}", level="WARNING", icon=Icons.STOP)
+        return (
+            f"--- EXECUTION ERROR ---\n"
+            f"SYSTEM ERROR: You are trying to use 'execute' on a .{ext} file. \n"
+            f"The 'execute' tool is ONLY for running scripts (.py, .sh, .js).\n"
+            f"To save data files like .json or .txt, you MUST use 'file_system(operation=\"write\", ...)' instead."
+        )
+
     # 1. Fix "Slash-N" Hallucination
     if "\\n" in content:
         content = content.replace("\\n", "\n")
@@ -112,7 +123,8 @@ async def tool_execute(filename: str, content: str, sandbox_dir: Path, sandbox_m
             f"--- EXECUTION RESULT ---\n"
             f"EXIT CODE: {exit_code}\n"
             f"STDOUT/STDERR:\n{output}\n"
-            f"{diagnostic_info}"
+            f"{diagnostic_info}\n"
+            f"SYSTEM REMINDER: Execution finished. Check your ACTIVE STRATEGY & CHECKLIST for any remaining meta-tasks (like learning skills or updating profile) before ending the turn."
         )
 
     except Exception as e:
