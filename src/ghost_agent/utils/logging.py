@@ -6,7 +6,7 @@ import contextvars
 from typing import Any, Optional
 
 request_id_context = contextvars.ContextVar("request_id", default="SYSTEM")
-LOG_TRUNCATE_LIMIT = 30
+LOG_TRUNCATE_LIMIT = 40
 DEBUG_MODE = False 
 
 class Icons:

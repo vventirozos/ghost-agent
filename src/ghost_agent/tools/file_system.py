@@ -30,7 +30,7 @@ async def tool_write_file(filename: str, content: Any, sandbox_dir: Path):
     pretty_log("File Write", filename, icon=Icons.TOOL_FILE_W)
     try:
         if content is None or str(content).strip().lower() == "none" or str(content).strip() == "":
-            return f"Error: You are trying to write 'None' or empty data to '{filename}'. This usually means a previous tool (like search) failed. Check your data before writing."
+            return f"Error: The 'content' you provided for '{filename}' is empty or 'None'. You MUST provide the actual text to write. If you intended to use data from a previous tool, ensure that tool succeeded and produced output."
 
         # Auto-serialize if the LLM sends a JSON object/list instead of a string
         if isinstance(content, (dict, list)):
@@ -144,18 +144,30 @@ async def tool_file_system(operation: str, sandbox_dir: Path, tor_proxy: str, pa
     target_path = path or kwargs.get("filename") or kwargs.get("path")
     final_content = content or kwargs.get("data") or kwargs.get("content")
 
+    # --- HALLUCINATION HEALING ---
+    # If the LLM used 'url' as a filename for a non-download operation
+    if not target_path and url and operation != "download":
+        target_path = url
+        url = None
+    
+    # If the LLM put the content in 'path' but didn't provide 'content' (common for write)
+    if operation == "write" and target_path and not final_content:
+        # Check if the LLM accidentally sent the content as the only other parameter
+        # This is a bit risky but helps with very small LLMs. 
+        # For now, let's just improve the error message instead of guessing.
+        pass
+
     if operation == "list": return await tool_list_files(sandbox_dir)
     if operation == "search": return await tool_file_search(final_content, sandbox_dir, target_path)
     if operation == "inspect": return await tool_inspect_file(target_path, sandbox_dir)
     
     if operation == "download":
-        if not url: return "Error: 'url' parameter is required for download."
-        # If target_path is the same as url, it means the model didn't provide a specific filename
-        final_filename = target_path if target_path != url else (kwargs.get("filename") or kwargs.get("content"))
-        if final_filename == url: final_filename = None
-        return await tool_download_file(url=str(url), sandbox_dir=sandbox_dir, tor_proxy=tor_proxy, filename=final_filename)
+        if not url: return "Error: The 'url' parameter is MANDATORY for download operations."
+        return await tool_download_file(url=str(url), sandbox_dir=sandbox_dir, tor_proxy=tor_proxy, filename=target_path)
 
-    if not target_path: return f"Error: 'path' (filename) is required for {operation}"
+    if not target_path: 
+        return f"Error: The 'path' (target filename) is missing for the '{operation}' operation. You MUST specify WHICH file to {operation}."
+    
     if operation == "read": return await tool_read_file(target_path, sandbox_dir)
     if operation == "write": return await tool_write_file(target_path, final_content, sandbox_dir)
     

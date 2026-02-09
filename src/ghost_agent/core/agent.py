@@ -308,16 +308,16 @@ class GhostAgent:
 
                     # --- B. DYNAMIC TEMPERATURE (ERROR RECOVERY) ---
                     if last_was_failure:
-                        # Aggressive scaling for execution strikes: 0.20 -> 0.50 -> 0.70
+                        # Moderate scaling for execution strikes: 0.20 -> 0.40 -> 0.60
                         if execution_failure_count == 1:
-                            active_temp = max(current_temp, 0.50)
+                            active_temp = max(current_temp, 0.40)
                         elif execution_failure_count >= 2:
-                            active_temp = max(current_temp, 0.70)
+                            active_temp = max(current_temp, 0.60)
                         else:
                             # General tool failure (non-execution)
-                            active_temp = min(current_temp + 0.3, 0.95)
+                            active_temp = min(current_temp + 0.1, 0.80)
                         
-                        pretty_log("Brainstorming", f"Increasing variance to {active_temp:.2f} to solve error", icon=Icons.IDEA)
+                        pretty_log("Brainstorming", f"Adjusting variance to {active_temp:.2f} to solve error", icon=Icons.IDEA)
                     else:
                         active_temp = current_temp
 
@@ -356,12 +356,16 @@ class GhostAgent:
                     
                     if not tool_calls:
                         # --- IMPROVED CHECKLIST ENFORCEMENT ---
-                        request_context = (last_user_content + thought_content).lower()
-                        has_meta_intent = any(kw in request_context for kw in ["learn", "skill", "profile", "lesson", "playbook", "record", "save"])
+                        # ONLY check user content for intent, NOT the thought_content (prevents self-triggering)
+                        user_request_context = last_user_content.lower()
+                        has_meta_intent = any(kw in user_request_context for kw in ["learn", "skill", "profile", "lesson", "playbook", "record", "save"])
                         meta_tools_called = any(t in raw_tools_called for t in ["learn_skill", "update_profile"])
                         
                         if has_meta_intent and not meta_tools_called and turn < 4:
                             pretty_log("Checklist Nudge", "Enforcing meta-task compliance", icon="☝️")
+                            # If we are nudging, we should "undo" the final_ai_content addition for this turn 
+                            # to prevent repetitive "505050" style outputs.
+                            final_ai_content = final_ai_content[:-len(content)] if content else final_ai_content
                             messages.append({"role": "system", "content": "CRITICAL: You have not fulfilled the learning/profile instructions in the user's request. You MUST call 'learn_skill' or 'update_profile' now before finishing."})
                             continue
 
@@ -435,7 +439,7 @@ class GhostAgent:
                                     # Show error preview in log
                                     error_preview = "Unknown Error"
                                     if "STDOUT/STDERR:" in str_res:
-                                        error_preview = str_res.split("STDOUT/STDERR:")[1].strip()[:50].replace("\n", " ")
+                                        error_preview = str_res.split("STDOUT/STDERR:")[1].strip().replace("\n", " ")
                                     
                                     pretty_log("Execution Fail", f"Strike {execution_failure_count}/3 -> {error_preview}", icon=Icons.FAIL)
                                     from ..tools.file_system import tool_list_files
@@ -456,7 +460,7 @@ class GhostAgent:
                                 last_was_failure = True
                                 if not force_stop: 
                                     # Show the specific error in the log title for better transparency
-                                    error_preview = str_res.replace("Error:", "").strip()[:50]
+                                    error_preview = str_res.replace("Error:", "").strip()
                                     pretty_log("Tool Warning", f"{fname} -> {error_preview}", icon=Icons.WARN)
                             
                             if fname in ["manage_tasks"] and "SUCCESS" in str_res: force_stop = True

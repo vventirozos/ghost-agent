@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import List
 from ..utils.logging import Icons, pretty_log
 
-async def tool_execute(filename: str, content: str, sandbox_dir: Path, sandbox_manager, scrapbook=None, args: List[str] = None):
+async def tool_execute(filename: str, content: str, sandbox_dir: Path, sandbox_manager, scrapbook=None, args: List[str] = None, memory_dir: Path = None):
     # --- 🛡️ HIJACK LAYER: CODE SANITIZATION (Verbatim from Granite4) ---
     
     # 0. VALIDATION: Ensure we are only executing scripts
@@ -26,13 +26,19 @@ async def tool_execute(filename: str, content: str, sandbox_dir: Path, sandbox_m
     if "\\n" in content:
         content = content.replace("\\n", "\n")
 
-    # 2. Fix Escaped Quotes
-    content = content.replace('\\"', '"')
-    content = content.replace("\\'", "'")
+    # 2. Fix Escaped Quotes (Precision Layer)
+    # We only want to fix hallucinated escapes like \" or \' that appear in the middle of text
+    # but LLMs often escape EVERYTHING when they think they are in a JSON string.
+    # However, we must NOT unescape things that are meant to be escaped.
+    # A common LLM hallucination is: print(\"hello\") -> print("hello")
+    # We use a negative lookbehind to ensure we don't unescape \\' or \\"
+    content = re.sub(r'(?<!\\)\\(?P<quote>[\'\"])', r'\1', content)
 
     # 3. Fix Raw Regex Strings (The r\pattern Crash)
+    # If the LLM writes r\d+ instead of r'\d+', we try to wrap it.
     try:
-        content = re.sub(r'(?<![\'"])r\\([^\s\),]+)', r"r'''\\\1'''", content)
+        # Only wrap if it's r\ followed by word characters and not already quoted
+        content = re.sub(r'(?<![\'"])r\\(\w+)', r"r'\1'", content)
     except Exception:
         pass 
 
@@ -100,6 +106,22 @@ async def tool_execute(filename: str, content: str, sandbox_dir: Path, sandbox_m
         # --- GRANITE-STYLE ERROR DIAGNOSTICS ---
         diagnostic_info = ""
         if exit_code != 0:
+            # --- LOG FAILURE FOR AGGREGATE ANALYSIS ---
+            if memory_dir:
+                try:
+                    report_path = memory_dir / "failure_reports.jsonl"
+                    report_entry = {
+                        "timestamp": datetime.datetime.now().isoformat(),
+                        "filename": filename,
+                        "content": content,
+                        "error": output,
+                        "exit_code": exit_code
+                    }
+                    with open(report_path, "a") as f:
+                        f.write(json.dumps(report_entry) + "\n")
+                except Exception as e:
+                    logger.error(f"Failed to log failure report: {e}")
+
             tb_match = re.findall(r'File "([^"]+)", line (\d+),', output)
             if tb_match:
                 last_error_file, last_error_line = tb_match[-1]
