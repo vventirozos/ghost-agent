@@ -1,6 +1,6 @@
 # Ghost Agent: Autonomous modular operator
 
-Optimized for high-performance operation on NVIDIA Jetson Orin Nano (7.4GB RAM).
+Optimized for high-performance operation on NVIDIA Jetson Orin Nano 8GB.
 
 ## 🧠 Core Architecture
 - **System 2 Reasoning**: Multi-turn planning with mandatory checklist enforcement to prevent task skipping.
