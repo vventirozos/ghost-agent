@@ -223,7 +223,7 @@ class GhostAgent:
 
                 # VERBATIM MEMORY INJECTION LOGIC FROM ORIGINAL SCRIPT
                 is_fact_check = "fact-check" in lc or "verify" in lc
-                trivial_triggers = ["time", "date", "weather", "who are you", "system health", "status", "name is", "hello", " hi "]
+                trivial_triggers = ["who are you", "hello", " hi ", "hey there", "how are you", "what's up", "name is"]
                 is_trivial = any(t in last_user_content.lower() for t in trivial_triggers)
 
                 # ONLY inject memory if it's a general chat, NOT trivial, and NOT a fact check
@@ -264,10 +264,11 @@ class GhostAgent:
                     if force_stop: break
                     
                     # --- SYSTEM 2 REASONING LOOP ---
-                    if turn == 0:
+                    # Only run reasoning for complex tasks (Coding or non-trivial requests)
+                    if turn == 0 and not is_trivial:
                         reasoning_payload = {
                             "model": model,
-                            "messages": messages + [{"role": "user", "content": "THINK: Review the objective and lessons. Create a STAMPED CHECKLIST of every single action requested. You MUST execute every item. If the user asks for a 'failure' or 'buggy' step, you MUST comply—do not 'auto-fix' it until the plan says to. Identify 'meta' instructions like learning skills that are easy to skip. Do not use tools yet."}],
+                            "messages": messages + [{"role": "user", "content": "THINK: Review the objective and any recent lessons. Create a STAMPED CHECKLIST of every single action EXPLICITLY requested by the user. Identify if the user specifically asked for meta-tasks (like learning a skill or recording a lesson). If the request is a simple greeting or statement, do NOT invent extra tasks. Do not use tools yet."}],
                             "temperature": 0.1,
                             "max_tokens": 512
                         }
