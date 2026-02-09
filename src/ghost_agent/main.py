@@ -36,6 +36,7 @@ def parse_args():
     parser.add_argument("--temperature", "-t", type=float, default=0.7)
     parser.add_argument("--daemon", "-d", action="store_true")
     parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Disable log truncation for debugging")
     parser.add_argument("--no-memory", action="store_true")
     parser.add_argument("--max-context", type=int, default=8192)
     parser.add_argument("--api-key", default=os.getenv("GHOST_API_KEY", "ghost-secret-123"))
@@ -154,7 +155,7 @@ def main():
     tokenizer_path = base_dir / "system" / "tokenizer"
     tor_proxy = os.getenv("TOR_PROXY", "socks5://127.0.0.1:9050")
     
-    setup_logging(str(log_file), args.debug, args.daemon)
+    setup_logging(str(log_file), args.debug, args.daemon, args.verbose)
     load_tokenizer(tokenizer_path)
     
     # Ensure directories exist

@@ -59,9 +59,11 @@ class Icons:
 
 logger = logging.getLogger("GhostAgent")
 
-def setup_logging(log_file: str, debug: bool = False, daemon: bool = False):
-    global DEBUG_MODE
+def setup_logging(log_file: str, debug: bool = False, daemon: bool = False, verbose: bool = False):
+    global DEBUG_MODE, LOG_TRUNCATE_LIMIT
     DEBUG_MODE = debug
+    if verbose:
+        LOG_TRUNCATE_LIMIT = 1000000
     logger.setLevel(logging.DEBUG if debug else logging.INFO)
     formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%H:%M:%S')
 
