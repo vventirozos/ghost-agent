@@ -36,18 +36,14 @@ async def tool_write_file(filename: str, content: str, sandbox_dir: Path):
     except Exception as e: return f"Error: {e}"
 
 async def tool_list_files(sandbox_dir: Path, memory_system=None):
-    pretty_log("Sandbox Tree", "Scanning directories", icon=Icons.TOOL_FILE_I)
+    pretty_log("Sandbox Tree", "Listing workspace files", icon=Icons.TOOL_FILE_I)
     try:
-        tree = []
-        for path in sorted(sandbox_dir.rglob("*")):
-            rel_path = path.relative_to(sandbox_dir)
-            depth = len(rel_path.parts) - 1
-            prefix = "  " * depth + "|-- " if depth > 0 else ""
-            marker = "📁 " if path.is_dir() else "📄 "
-            tree.append(f"{prefix}{marker}{rel_path}")
+        # Shallow listing like Granite4 for high performance
+        files = os.listdir(sandbox_dir)
+        tree = [f"📄 {f}" if (sandbox_dir / f).is_file() else f"📁 {f}" for f in sorted(files) if not f.startswith(".")]
         
         sandbox_tree = "\n".join(tree) if tree else "[Empty]"
-        return f"CURRENT SANDBOX DIRECTORY STRUCTURE:\n{sandbox_tree}\n\n(Use these full relative paths for all file tools)"
+        return f"CURRENT SANDBOX DIRECTORY STRUCTURE:\n{sandbox_tree}\n\n(Use these filenames for all file tools)"
     except Exception as e: return f"Error scanning sandbox: {e}"
 
 async def tool_download_file(url: str, sandbox_dir: Path, tor_proxy: str, filename: str = None):

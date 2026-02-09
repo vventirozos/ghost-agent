@@ -55,11 +55,14 @@ class VectorMemory:
         if not self.library_file.exists():
             self.library_file.write_text("[]")
 
+        # --- GRANITE4 STYLE: LOCAL EMBEDDINGS ---
         try:
-            # Use our custom robust embedding function
-            self.embedding_fn = GhostEmbeddingFunction(upstream_url)
+            from chromadb.utils import embedding_functions
+            self.embedding_fn = embedding_functions.SentenceTransformerEmbeddingFunction(
+                model_name="all-MiniLM-L6-v2"
+            )
         except Exception as e:
-            logger.error(f"Error initializing embedding function: {e}")
+            logger.error(f"Error loading embedding model: {e}")
             sys.exit(1)
 
         try:
@@ -71,8 +74,8 @@ class VectorMemory:
                 )
             )
             
-            # Use a collection name that reflects the embedding provider to avoid conflicts
-            collection_name = "agent_memory_v2" # Renamed to avoid conflict with 'sentence_transformer' version
+            # Switch back to 'agent_memory' to match standard naming
+            collection_name = "agent_memory"
             
             self.collection = self.client.get_or_create_collection(
                 name=collection_name,

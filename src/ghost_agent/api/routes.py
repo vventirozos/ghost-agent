@@ -128,13 +128,20 @@ async def api_generate(request: Request):
 async def chat_proxy(request: Request, background_tasks: BackgroundTasks):
     agent = get_agent(request)
     body = await request.json()
+    model = body.get("model", "ghost-agent")
+    stream = body.get("stream", False)
+    
     content, created_time, req_id = await agent.handle_chat(body, background_tasks)
     
-    if body.get("stream", False):
-        return StreamingResponse(agent.context.llm_client.stream_openai(body.get("model", "ghost-agent"), content, created_time, req_id), media_type="text/event-stream")
+    # Null out the body immediately after the agent is done using it
+    # This helps free the large JSON request data early
+    body = None
+    
+    if stream:
+        return StreamingResponse(agent.context.llm_client.stream_openai(model, content, created_time, req_id), media_type="text/event-stream")
     
     return JSONResponse({
-        "id": f"chatcmpl-{req_id}", "object": "chat.completion", "created": created_time, "model": body.get("model", "ghost-agent"),
+        "id": f"chatcmpl-{req_id}", "object": "chat.completion", "created": created_time, "model": model,
         "choices": [{"index": 0, "message": {"role": "assistant", "content": content}, "finish_reason": "stop"}],
         "message": {"role": "assistant", "content": content},
         "done": True, "created_at": get_utc_timestamp()

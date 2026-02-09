@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import datetime
 import importlib.util
 import os
 import sys
@@ -86,7 +87,7 @@ async def lifespan(app):
         while True:
             await asyncio.sleep(60) # Check every minute
             elapsed = (datetime.datetime.now() - context.last_activity_time).total_seconds()
-            if elapsed >= 300: # 5 Minutes
+            if elapsed >= 120: # 2 Minutes
                 # Reset activity time so we don't clear repeatedly
                 context.last_activity_time = datetime.datetime.now()
                 agent.clear_session()

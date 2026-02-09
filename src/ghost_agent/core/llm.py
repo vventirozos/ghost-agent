@@ -28,20 +28,21 @@ class LLMClient:
 
     async def chat_completion(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Sends a chat completion request to the upstream LLM with retry logic.
+        Sends a chat completion request to the upstream LLM with robust retry logic.
         """
-        for attempt in range(3):
+        for attempt in range(10): 
             try:
                 resp = await self.http_client.post("/v1/chat/completions", json=payload)
                 resp.raise_for_status()
                 return resp.json()
             except (httpx.RemoteProtocolError, httpx.ReadError, httpx.WriteError, httpx.ConnectError) as e:
-                if attempt < 2:
-                    wait_time = 2 ** attempt
-                    pretty_log("Upstream Retry", f"Connection issue: {type(e).__name__}. Retrying in {wait_time}s...", icon=Icons.RETRY)
+                if attempt < 9:
+                    # Exponential backoff: 2, 4, 8, 16... capped at 30s
+                    wait_time = min(2 ** (attempt + 1), 30)
+                    pretty_log("Upstream Retry", f"[{attempt+1}/10] {type(e).__name__}. Retrying in {wait_time}s...", icon=Icons.RETRY)
                     await asyncio.sleep(wait_time)
                 else:
-                    pretty_log("Upstream Failed", f"Failed after 3 attempts: {str(e)}", level="ERROR", icon=Icons.FAIL)
+                    pretty_log("Upstream Failed", f"Failed after 10 attempts: {str(e)}", level="ERROR", icon=Icons.FAIL)
                     raise
             except httpx.HTTPStatusError as e:
                 pretty_log("Upstream Error", f"HTTP {e.response.status_code}: {e.response.text}", level="ERROR", icon=Icons.FAIL)
@@ -52,22 +53,21 @@ class LLMClient:
 
     async def get_embeddings(self, texts: List[str]) -> List[List[float]]:
         """
-        Fetches embeddings from the upstream LLM with retry logic.
+        Fetches embeddings from the upstream LLM with robust retry logic.
         """
         payload = {"input": texts, "model": "default"}
-        for attempt in range(3):
+        for attempt in range(10): 
             try:
                 resp = await self.http_client.post("/v1/embeddings", json=payload)
                 resp.raise_for_status()
                 data = resp.json()
-                # Return the embeddings in the order they were requested
                 return [item["embedding"] for item in data["data"]]
             except (httpx.RemoteProtocolError, httpx.ReadError, httpx.WriteError, httpx.ConnectError) as e:
-                if attempt < 2:
-                    wait_time = 2 ** attempt
+                if attempt < 9:
+                    wait_time = min(2 ** (attempt + 1), 20)
                     await asyncio.sleep(wait_time)
                 else:
-                    pretty_log("Embedding Failed", f"Upstream error: {str(e)}", level="ERROR", icon=Icons.FAIL)
+                    pretty_log("Embedding Failed", f"Failed after 10 attempts: {str(e)}", level="ERROR", icon=Icons.FAIL)
                     raise
             except Exception as e:
                 pretty_log("Embedding Fatal", str(e), level="ERROR", icon=Icons.FAIL)

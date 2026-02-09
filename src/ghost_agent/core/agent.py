@@ -5,6 +5,8 @@ import logging
 import uuid
 import re
 import gc
+import ctypes
+import platform
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 
@@ -36,16 +38,28 @@ class GhostAgent:
         self.available_tools = get_available_tools(context)
         self.agent_semaphore = asyncio.Semaphore(1)
         self.memory_semaphore = asyncio.Semaphore(1) # For background tasks
-        self.request_counter = 0
+
+    def release_unused_ram(self):
+        """
+        Forces Python and the OS to reclaim unused reserved memory.
+        """
+        try:
+            gc.collect()
+            if platform.system() == "Linux":
+                try:
+                    # Access glibc's malloc_trim directly
+                    libc = ctypes.CDLL("libc.so.6")
+                    libc.malloc_trim(0)
+                except: pass
+        except: pass
 
     def clear_session(self):
         """
         Hard reset of the agent's volatile memory.
         """
-        pretty_log("Session Reset", "Clearing context and working memory", icon=Icons.MEM_WIPE)
         if hasattr(self.context, 'scratchpad') and self.context.scratchpad:
             self.context.scratchpad.clear()
-        gc.collect()
+        self.release_unused_ram()
         return True
 
     def process_rolling_window(self, messages: List[Dict[str, Any]], max_tokens: int) -> List[Dict[str, Any]]:
@@ -53,10 +67,36 @@ class GhostAgent:
         system_msgs = [m for m in messages if m.get("role") == "system"]
         raw_history = [m for m in messages if m.get("role") != "system"]
         
-        # Context Compression
+        # --- GRANITE-STYLE ANTI-BLOAT FILTER ---
+        clean_history = []
+        seen_tool_outputs = set()
+        
+        for msg in raw_history:
+            role = msg.get("role")
+            content = str(msg.get("content", ""))
+            
+            # 1. Deduplicate Tool Outputs
+            if role == "tool":
+                tool_name = msg.get('name', 'unknown')
+                # Create a fingerprint of the tool name and first 100 chars of output
+                fingerprint = f"{tool_name}:{content[:100]}"
+                if fingerprint in seen_tool_outputs:
+                    continue # Drop redundant tool output
+                seen_tool_outputs.add(fingerprint)
+            
+            # 2. Filter Assistant Meta-Chatter
+            if role == "assistant":
+                lower_content = content.lower()
+                # Skip messages that are just memory confirmations
+                if "memory has been updated" in lower_content or "memory stored" in lower_content:
+                    continue
+            
+            clean_history.append(msg)
+
+        # Context Compression for remaining long tool outputs
         compressed_history = []
-        msg_count = len(raw_history)
-        for i, msg in enumerate(raw_history):
+        msg_count = len(clean_history)
+        for i, msg in enumerate(clean_history):
             role, content = msg.get("role"), str(msg.get("content", ""))
             if role == "tool" and (msg_count - i) > 5 and len(content) > 2000:
                 msg["content"] = content[:1000] + "\n... [OLD DATA COMPRESSED] ...\n" + content[-1000:]
@@ -100,9 +140,6 @@ class GhostAgent:
                 score, fact, profile_up = float(result_json.get("score", 0.0)), result_json.get("fact", ""), result_json.get("profile_update", None)
                 
                 # --- AGGRESSIVE SELECTIVITY FILTER ---
-                # Even if the LLM gives it a high score, we do a sanity check.
-                # Identity facts MUST contain references to the user.
-                # Project facts MUST contain references to files, code, or local context.
                 fact_lc = fact.lower()
                 is_personal = any(w in fact_lc for w in ["user", "me", "my ", " i ", "identity", "preference", "like"])
                 is_technical = any(w in fact_lc for w in ["file", "path", "code", "error", "script", "project", "repo", "build", "library", "version"])
@@ -266,7 +303,20 @@ class GhostAgent:
                         "max_tokens": 4096 # Allow for full script generation
                     }
                     pretty_log("LLM Request", f"Turn {turn+1} | Temp {active_temp:.2f}", icon=Icons.LLM_ASK)
-                    data = await self.context.llm_client.chat_completion(payload)
+                    
+                    try:
+                        data = await self.context.llm_client.chat_completion(payload)
+                    except (httpx.ConnectError, httpx.ConnectTimeout):
+                        final_ai_content = "CRITICAL: The upstream LLM server is unreachable. It may have crashed due to memory pressure or is currently restarting. Please wait a moment and try again."
+                        pretty_log("System Fault", "Upstream server unreachable", level="ERROR", icon=Icons.FAIL)
+                        force_stop = True
+                        break
+                    except Exception as e:
+                        final_ai_content = f"CRITICAL: An unexpected error occurred while communicating with the LLM: {str(e)}"
+                        pretty_log("System Fault", str(e), level="ERROR", icon=Icons.FAIL)
+                        force_stop = True
+                        break
+
                     msg = data["choices"][0]["message"]
                     content, tool_calls = msg.get("content") or "", msg.get("tool_calls", [])
                     
@@ -373,12 +423,7 @@ class GhostAgent:
                 # Cleanup volatile objects
                 del tools_run_this_turn
                 del messages
-                
-                # Periodically trigger GC to avoid blocking every single request
-                self.request_counter += 1
-                if self.request_counter >= 10:
-                    gc.collect()
-                    self.request_counter = 0
+                self.release_unused_ram()
                 
                 return final_ai_content, created_time, req_id
         finally:
