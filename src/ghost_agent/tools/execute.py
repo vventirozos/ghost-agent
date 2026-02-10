@@ -15,11 +15,16 @@ async def tool_execute(filename: str, content: str, sandbox_dir: Path, sandbox_m
     ext = str(filename).split('.')[-1].lower()
     if ext not in ["py", "sh", "js"]:
         pretty_log("Execution Blocked", f"Invalid extension: .{ext}", level="WARNING", icon=Icons.STOP)
+        
+        tip = "To save data files like .json or .txt, you MUST use 'file_system(operation=\"write\", ...)' instead."
+        if ext in ["png", "jpg", "jpeg", "pdf", "svg"]:
+            tip = f"To create a .{ext} (plot/image), you MUST write a Python script that saves the file directly (e.g., using 'plt.savefig(\"{filename}\")') and then run that script using 'execute'."
+
         return (
             f"--- EXECUTION ERROR ---\n"
             f"SYSTEM ERROR: You are trying to use 'execute' on a .{ext} file. \n"
             f"The 'execute' tool is ONLY for running scripts (.py, .sh, .js).\n"
-            f"To save data files like .json or .txt, you MUST use 'file_system(operation=\"write\", ...)' instead."
+            f"SYSTEM TIP: {tip}"
         )
 
     # 1. Fix "Slash-N" Hallucination

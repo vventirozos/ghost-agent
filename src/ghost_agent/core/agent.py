@@ -412,9 +412,9 @@ class GhostAgent:
                         if a_hash in seen_tools and fname != "execute" and not is_state_tool:
                             redundancy_strikes += 1
                             pretty_log("Redundancy", f"Blocked duplicate: {fname}", icon=Icons.RETRY)
-                            messages.append({"role": "tool", "tool_call_id": tool["id"], "name": fname, "content": "SYSTEM MONITOR: Already executed. Move to next step."})
+                            messages.append({"role": "tool", "tool_call_id": tool["id"], "name": fname, "content": "SYSTEM MONITOR: Already executed successfully. Do not repeat this tool call. If you have finished all other tasks, provide your final response now."})
                             if redundancy_strikes >= 3: force_stop = True
-                            last_was_failure = True; continue
+                            continue # Do NOT set last_was_failure
                         seen_tools.add(a_hash)
                         if fname in self.available_tools:
                             tool_tasks.append(self.available_tools[fname](**t_args))
@@ -464,7 +464,9 @@ class GhostAgent:
                                     error_preview = str_res.replace("Error:", "").strip()
                                     pretty_log("Tool Warning", f"{fname} -> {error_preview}", icon=Icons.WARN)
                             
-                            if fname in ["manage_tasks"] and "SUCCESS" in str_res: force_stop = True
+                            elif fname in ["manage_tasks", "learn_skill", "update_profile"] and "SUCCESS" in str_res.upper():
+                                # After fulfilling a meta-task, if we already have a final AI content or a successful execution, stop.
+                                force_stop = True
                 
                 if not final_ai_content:
                     if tools_run_this_turn: final_ai_content = f"Task completed successfully. Final tool output:\n\n{tools_run_this_turn[-1]['content']}"
