@@ -267,10 +267,10 @@ async def tool_update_profile(category: str, key: str, value: str, profile_memor
         except: pass
     return f"SUCCESS: Profile updated."
 
-async def tool_learn_skill(task: str, mistake: str, solution: str, skill_memory):
+async def tool_learn_skill(task: str, mistake: str, solution: str, skill_memory, memory_system=None):
     if not skill_memory: return "Error: Skill memory not active."
-    skill_memory.learn_lesson(task, mistake, solution)
-    return "SUCCESS: Lesson learned and saved to the Skill Playbook."
+    skill_memory.learn_lesson(task, mistake, solution, memory_system=memory_system)
+    return "SUCCESS: Lesson learned and saved to the Skill Playbook and Vector Memory."
 
 async def tool_knowledge_base(action: str, sandbox_dir: Path, memory_system, **kwargs):
     # --- FLEXIBLE PARAMETER MAPPING ---

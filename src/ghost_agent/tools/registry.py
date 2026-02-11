@@ -27,7 +27,7 @@ def get_available_tools(context):
         "knowledge_base": lambda **kwargs: tool_knowledge_base(sandbox_dir=context.sandbox_dir, memory_system=context.memory_system, profile_memory=context.profile_memory, **kwargs),
         "recall": lambda **kwargs: tool_recall(memory_system=context.memory_system, **kwargs),
         "execute": lambda **kwargs: tool_execute(sandbox_dir=context.sandbox_dir, sandbox_manager=context.sandbox_manager, memory_dir=context.memory_dir, **kwargs),
-        "learn_skill": lambda **kwargs: tool_learn_skill(skill_memory=context.skill_memory, **kwargs),
+        "learn_skill": lambda **kwargs: tool_learn_skill(skill_memory=context.skill_memory, memory_system=context.memory_system, **kwargs),
         "web_search": lambda **kwargs: tool_search(anonymous=context.args.anonymous, tor_proxy=context.tor_proxy, **kwargs),
         "deep_research": lambda **kwargs: tool_deep_research(anonymous=context.args.anonymous, tor_proxy=context.tor_proxy, **kwargs),
         "fact_check": lambda **kwargs: tool_fact_check(http_client=context.llm_client.http_client, tool_definitions=TOOL_DEFINITIONS, deep_research_callable=lambda q: tool_deep_research(query=q, anonymous=context.args.anonymous, tor_proxy=context.tor_proxy), **kwargs),

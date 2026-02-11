@@ -42,8 +42,10 @@ async def tool_execute(filename: str, content: str, sandbox_dir: Path, sandbox_m
     # 3. Fix Raw Regex Strings (The r\pattern Crash)
     # If the LLM writes r\d+ instead of r'\d+', we try to wrap it.
     try:
-        # Only wrap if it's r\ followed by word characters and not already quoted
-        content = re.sub(r'(?<![\'"])r\\(\w+)', r"r'\1'", content)
+        # Matches r\ followed by characters and wraps it in quotes while preserving the backslash.
+        # We capture everything until a likely delimiter (space, comma, paren, quote, etc.)
+        # We also consume an optional trailing quote to avoid doubling up.
+        content = re.sub(r'(?<![\'"])r\\([^\s,\)\}\]\'\"]+)[\'\"]?', r"r'\\\1'", content)
     except Exception:
         pass 
 

@@ -243,7 +243,7 @@ class GhostAgent:
                 
                 # --- DYNAMIC SKILL INJECTION ---
                 if self.context.skill_memory:
-                    playbook = self.context.skill_memory.get_playbook_context()
+                    playbook = self.context.skill_memory.get_playbook_context(query=last_user_content, memory_system=self.context.memory_system)
                     for m in messages:
                         if m.get("role") == "system":
                             m["content"] += f"\n\n{playbook}"
@@ -259,27 +259,48 @@ class GhostAgent:
                 tools_run_this_turn = []
                 forget_was_called = False
                 thought_content = "" # Persistent for Checklist Enforcement
+                was_complex_task = False
 
                 for turn in range(20):
+                    if turn > 2: was_complex_task = True
                     if force_stop: break
                     
-                    # --- SYSTEM 2 REASONING LOOP ---
+                    # --- SYSTEM 2 ADAPTIVE REASONING ---
                     # Only run reasoning for complex tasks (Coding or non-trivial requests)
-                    if turn == 0 and not is_trivial:
+                    if not is_trivial:
+                        if turn == 0:
+                            reasoning_prompt = "THINK: Review the objective and any recent lessons. Create a STAMPED CHECKLIST of every single action EXPLICITLY requested by the user. Identify if the user specifically asked for meta-tasks (like learning a skill or recording a lesson). If the request is a simple greeting or statement, do NOT invent extra tasks. Do not use tools yet."
+                        else:
+                            reasoning_prompt = f"THINK: Review the objective, current sandbox state, and the results of the previous turn. UPDATE your STAMPED CHECKLIST. Identify what is finished and what remains. If a tool failed, analyze why and ADJUST your strategy. If all tasks are completed, state 'READY TO FINALIZE'. Current Checklist:\n{thought_content}"
+
                         reasoning_payload = {
                             "model": model,
-                            "messages": messages + [{"role": "user", "content": "THINK: Review the objective and any recent lessons. Create a STAMPED CHECKLIST of every single action EXPLICITLY requested by the user. Identify if the user specifically asked for meta-tasks (like learning a skill or recording a lesson). If the request is a simple greeting or statement, do NOT invent extra tasks. Do not use tools yet."}],
+                            "messages": messages + [{"role": "user", "content": reasoning_prompt}],
                             "temperature": 0.1,
                             "max_tokens": 512
                         }
                         try:
-                            pretty_log("Reasoning Loop", "Starting System 2 Analysis...", icon="🧠")
+                            pretty_log("Reasoning Loop", f"Turn {turn+1} Adaptive Analysis...", icon="🧠")
                             r_data = await self.context.llm_client.chat_completion(reasoning_payload)
                             thought_content = r_data["choices"][0]["message"].get("content", "")
-                            # Inject thought as a LATE system message so it's fresh in 'attention'
-                            messages.append({"role": "system", "content": f"### ACTIVE STRATEGY & CHECKLIST (DO NOT SKIP ANY STEP):\n{thought_content}"})
-                            pretty_log("Reasoning Loop", "Analysis complete", icon=Icons.OK)
-                        except: pass
+                            
+                            # Update system message with current thought content
+                            found_checklist = False
+                            for m in messages:
+                                if m.get("role") == "system" and "### ACTIVE STRATEGY" in m.get("content", ""):
+                                    m["content"] = f"### ACTIVE STRATEGY & CHECKLIST (DO NOT SKIP ANY STEP):\n{thought_content}"
+                                    found_checklist = True
+                                    break
+                            if not found_checklist:
+                                messages.append({"role": "system", "content": f"### ACTIVE STRATEGY & CHECKLIST (DO NOT SKIP ANY STEP):\n{thought_content}"})
+                            
+                            pretty_log("Reasoning Loop", f"Turn {turn+1} strategy updated", icon=Icons.OK)
+                            
+                            if "READY TO FINALIZE" in thought_content.upper() and turn > 0:
+                                pretty_log("Finalizing", "Agent signaled completion", icon=Icons.OK)
+                                # We don't break yet, we let the LLM generate the final response
+                        except Exception as e:
+                            logger.error(f"Reasoning step failed: {e}")
 
                     # --- A. DYNAMIC EYES & MEMORY (REAL-TIME CONTEXT) ---
                     # Always refresh Sandbox and Scrapbook state at turn start
@@ -472,6 +493,28 @@ class GhostAgent:
                     if tools_run_this_turn: final_ai_content = f"Task completed successfully. Final tool output:\n\n{tools_run_this_turn[-1]['content']}"
                     else: final_ai_content = "Process finished without textual output."
                 
+                # --- AUTOMATED POST-MORTEM (AUTO-LEARNING) ---
+                if was_complex_task or execution_failure_count > 0:
+                    try:
+                        # Only learn if we actually succeeded in the end
+                        if not force_stop or "READY TO FINALIZE" in thought_content.upper():
+                            history_summary = f"User: {last_user_content}\n"
+                            for t_msg in tools_run_this_turn[-5:]: # Last 5 tool actions
+                                history_summary += f"Tool {t_msg['name']}: {t_msg['content'][:200]}\n"
+                            
+                            learn_prompt = f"### TASK POST-MORTEM\nReview this successful but complex interaction. Did the agent encounter a specific error, hurdle, or mistake that required a unique solution? If so, extract it as a lesson.\n\nHISTORY:\n{history_summary}\n\nFINAL AI: {final_ai_content[:500]}\n\nReturn ONLY a JSON object with 'task', 'mistake', and 'solution'. If no unique lesson is found, return null."
+                            
+                            payload = {"model": model, "messages": [{"role": "system", "content": "You are a Meta-Cognitive Analyst."}, {"role": "user", "content": learn_prompt}], "temperature": 0.1, "response_format": {"type": "json_object"}}
+                            l_data = await self.context.llm_client.chat_completion(payload)
+                            l_content = l_data["choices"][0]["message"].get("content", "")
+                            if l_content and "null" not in l_content.lower():
+                                l_json = json.loads(l_content)
+                                if all(k in l_json for k in ["task", "mistake", "solution"]):
+                                    self.context.skill_memory.learn_lesson(l_json["task"], l_json["mistake"], l_json["solution"], memory_system=self.context.memory_system)
+                                    pretty_log("Auto-Learning", "New lesson captured automatically", icon="🎓")
+                    except Exception as e:
+                        logger.error(f"Auto-learning failed: {e}")
+
                 # Cleanup volatile objects
                 del tools_run_this_turn
                 del messages
