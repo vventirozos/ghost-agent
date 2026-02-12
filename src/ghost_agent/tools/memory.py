@@ -316,3 +316,11 @@ async def tool_knowledge_base(action: str, sandbox_dir: Path, memory_system, **k
         return await tool_update_profile(cat, key, value, profile_memory, memory_system) 
 
     return f"Error: Unknown action '{action}'"
+
+async def tool_dream_mode(context):
+    """
+    Manually triggers the Active Memory Consolidation (Dream Mode).
+    """
+    from ..core.dream import Dreamer
+    dreamer = Dreamer(context)
+    return await dreamer.dream()

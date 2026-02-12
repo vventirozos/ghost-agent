@@ -10,7 +10,8 @@ import platform
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 
-from .prompts import SYSTEM_PROMPT, CODE_SYSTEM_PROMPT, SMART_MEMORY_PROMPT
+from .prompts import SYSTEM_PROMPT, CODE_SYSTEM_PROMPT, SMART_MEMORY_PROMPT, PLANNING_SYSTEM_PROMPT
+from .planning import TaskTree, TaskStatus
 from ..utils.logging import Icons, pretty_log, request_id_context
 from ..utils.token_counter import estimate_tokens
 from ..tools.registry import get_available_tools, TOOL_DEFINITIONS
@@ -261,46 +262,79 @@ class GhostAgent:
                 thought_content = "" # Persistent for Checklist Enforcement
                 was_complex_task = False
 
+                # --- HIERARCHICAL PLANNER INITIALIZATION ---
+                task_tree = TaskTree()
+                current_plan_json = {}
+
                 for turn in range(20):
                     if turn > 2: was_complex_task = True
                     if force_stop: break
                     
-                    # --- SYSTEM 2 ADAPTIVE REASONING ---
+                    # --- SYSTEM 2 ADAPTIVE PLANNING ---
                     # Only run reasoning for complex tasks (Coding or non-trivial requests)
                     if not is_trivial:
-                        if turn == 0:
-                            reasoning_prompt = "THINK: Review the objective and any recent lessons. Create a STAMPED CHECKLIST of every single action EXPLICITLY requested by the user. Identify if the user specifically asked for meta-tasks (like learning a skill or recording a lesson). If the request is a simple greeting or statement, do NOT invent extra tasks. Do not use tools yet."
-                        else:
-                            reasoning_prompt = f"THINK: Review the objective, current sandbox state, and the results of the previous turn. UPDATE your STAMPED CHECKLIST. Identify what is finished and what remains. If a tool failed, analyze why and ADJUST your strategy. If all tasks are completed, state 'READY TO FINALIZE'. Current Checklist:\n{thought_content}"
+                        pretty_log("Reasoning Loop", f"Turn {turn+1} Strategic Analysis...", icon="🧠")
+                        
+                        # Prepare Planning Context
+                        last_tool_output = tools_run_this_turn[-1]["content"] if tools_run_this_turn else "None (Start of Task)"
+                        # Truncate for prompt efficiency
+                        if len(last_tool_output) > 1000: last_tool_output = last_tool_output[:500] + "\n...[TRUNCATED]...\n" + last_tool_output[-500:]
 
-                        reasoning_payload = {
+                        planning_prompt = f"""
+### CURRENT SITUATION
+User Request: {last_user_content}
+Last Tool Output: {last_tool_output}
+
+### CURRENT PLAN (JSON)
+{json.dumps(current_plan_json, indent=2) if current_plan_json else "No plan yet."}
+"""
+
+                        planning_payload = {
                             "model": model,
-                            "messages": messages + [{"role": "user", "content": reasoning_prompt}],
+                            "messages": [{"role": "system", "content": PLANNING_SYSTEM_PROMPT}, {"role": "user", "content": planning_prompt}],
                             "temperature": 0.1,
-                            "max_tokens": 512
+                            "max_tokens": 1024,
+                            "response_format": {"type": "json_object"}
                         }
+                        
                         try:
-                            pretty_log("Reasoning Loop", f"Turn {turn+1} Adaptive Analysis...", icon="🧠")
-                            r_data = await self.context.llm_client.chat_completion(reasoning_payload)
-                            thought_content = r_data["choices"][0]["message"].get("content", "")
+                            p_data = await self.context.llm_client.chat_completion(planning_payload)
+                            plan_content = p_data["choices"][0]["message"].get("content", "")
+                            plan_json = json.loads(plan_content)
+                            
+                            thought_content = plan_json.get("thought", "No thought provided.")
+                            tree_update = plan_json.get("tree_update", {})
+                            next_action_id = plan_json.get("next_action_id", "")
+                            
+                            # Update Tree State
+                            if tree_update:
+                                task_tree.load_from_json(tree_update)
+                                current_plan_json = task_tree.to_json()
+                            
+                            # Render Tree for System Prompt
+                            tree_render = task_tree.render()
                             
                             # Update system message with current thought content
                             found_checklist = False
                             for m in messages:
                                 if m.get("role") == "system" and "### ACTIVE STRATEGY" in m.get("content", ""):
-                                    m["content"] = f"### ACTIVE STRATEGY & CHECKLIST (DO NOT SKIP ANY STEP):\n{thought_content}"
+                                    m["content"] = f"### ACTIVE STRATEGY & PLAN (DO NOT SKIP ANY STEP):\nTHOUGHT: {thought_content}\n\nPLAN:\n{tree_render}\n\nFOCUS TASK: {next_action_id}"
                                     found_checklist = True
                                     break
                             if not found_checklist:
-                                messages.append({"role": "system", "content": f"### ACTIVE STRATEGY & CHECKLIST (DO NOT SKIP ANY STEP):\n{thought_content}"})
+                                messages.append({"role": "system", "content": f"### ACTIVE STRATEGY & PLAN (DO NOT SKIP ANY STEP):\nTHOUGHT: {thought_content}\n\nPLAN:\n{tree_render}\n\nFOCUS TASK: {next_action_id}"})
                             
-                            pretty_log("Reasoning Loop", f"Turn {turn+1} strategy updated", icon=Icons.OK)
+                            pretty_log("Reasoning Loop", f"Plan Updated. Focus: {next_action_id}", icon=Icons.OK)
                             
-                            if "READY TO FINALIZE" in thought_content.upper() and turn > 0:
+                            # Check for completion
+                            if task_tree.root_id and task_tree.nodes[task_tree.root_id].status == TaskStatus.DONE and turn > 0:
                                 pretty_log("Finalizing", "Agent signaled completion", icon=Icons.OK)
-                                # We don't break yet, we let the LLM generate the final response
+
                         except Exception as e:
-                            logger.error(f"Reasoning step failed: {e}")
+                            logger.error(f"Planning step failed: {e}")
+                            # FALLBACK: If planning fails, still try to proceed with a basic directive
+                            if not any("### ACTIVE STRATEGY" in m.get("content", "") for m in messages):
+                                messages.append({"role": "system", "content": "### ACTIVE STRATEGY: Proceed with the next logical step to fulfill the user request."})
 
                     # --- A. DYNAMIC EYES & MEMORY (REAL-TIME CONTEXT) ---
                     # Always refresh Sandbox and Scrapbook state at turn start
@@ -437,6 +471,27 @@ class GhostAgent:
                             if redundancy_strikes >= 3: force_stop = True
                             continue # Do NOT set last_was_failure
                         seen_tools.add(a_hash)
+                        
+                        # --- 👮 CRITIC LOOP (Suggestion 3) ---
+                        if fname == "execute":
+                            # Intercept execution for complex scripts
+                            code_content = t_args.get("content", "")
+                            if len(code_content.splitlines()) > 10:
+                                pretty_log("Critic Loop", "Reviewing complex code...", icon="🧐")
+                                is_approved, revised_code, critique = await self._run_critic_check(code_content, last_user_content, model)
+                                
+                                if not is_approved and revised_code:
+                                    pretty_log("Critic Intervention", "Code was revised by Critic for safety/logic.", icon="🛡️")
+                                    t_args["content"] = revised_code
+                                    # Update the tool call in history so the LLM sees the *corrected* code
+                                    tool["function"]["arguments"] = json.dumps(t_args) 
+                                    messages.append({"role": "system", "content": f"CRITIC INTERVENTION: Your code was auto-corrected. \nReason: {critique}\nExecuting revised version."})
+                                elif not is_approved:
+                                    # Critic rejected but didn't provide code (rare)
+                                    messages.append({"role": "tool", "tool_call_id": tool["id"], "name": fname, "content": f"CRITIC BLOCK: {critique}. Please rewrite the code."})
+                                    last_was_failure = True
+                                    continue
+
                         if fname in self.available_tools:
                             tool_tasks.append(self.available_tools[fname](**t_args))
                             tool_call_metadata.append((fname, tool["id"], a_hash))
@@ -462,6 +517,8 @@ class GhostAgent:
                                     error_preview = "Unknown Error"
                                     if "STDOUT/STDERR:" in str_res:
                                         error_preview = str_res.split("STDOUT/STDERR:")[1].strip().replace("\n", " ")
+                                    elif "SYSTEM ERROR:" in str_res:
+                                        error_preview = str_res.split("SYSTEM ERROR:")[1].strip().split("\n")[0]
                                     
                                     pretty_log("Execution Fail", f"Strike {execution_failure_count}/3 -> {error_preview}", icon=Icons.FAIL)
                                     from ..tools.file_system import tool_list_files
@@ -524,3 +581,32 @@ class GhostAgent:
         finally:
             pretty_log("Request Finished", special_marker="END")
             request_id_context.reset(token)
+
+    async def _run_critic_check(self, code: str, task_context: str, model: str):
+        """
+        Internal loop to critique code before execution.
+        Returns: (is_approved: bool, revised_code: str | None, critique: str)
+        """
+        from .prompts import CRITIC_SYSTEM_PROMPT
+        try:
+            prompt = f"### USER TASK:\n{task_context}\n\n### PROPOSED CODE:\n{code}"
+            payload = {
+                "model": model, 
+                "messages": [{"role": "system", "content": CRITIC_SYSTEM_PROMPT}, {"role": "user", "content": prompt}], 
+                "temperature": 0.0,
+                "response_format": {"type": "json_object"}
+            }
+            data = await self.context.llm_client.chat_completion(payload)
+            content = data["choices"][0]["message"]["content"]
+            result = json.loads(content)
+            
+            if result.get("status") == "APPROVED":
+                return True, None, "Approved"
+            else:
+                return False, result.get("revised_code"), result.get("critique", "Unspecified issue")
+                
+        except Exception as e:
+            logger.error(f"Critic failed: {e}")
+            return True, None, "Critic Failed (Fail-Open)"
+
+

@@ -2,7 +2,7 @@ import asyncio
 import hashlib
 import logging
 from apscheduler.triggers.cron import CronTrigger
-from ..utils.logging import pretty_log
+from ..utils.logging import pretty_log, Icons
 
 logger = logging.getLogger("GhostAgent")
 

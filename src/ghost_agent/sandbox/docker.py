@@ -87,7 +87,7 @@ class DockerSandbox:
             )
             self.container.exec_run(install_cmd)
             self.container.exec_run("touch /root/.supercharged")
-            pretty_log("Sandbox", "Environment Ready & Supercharged (2GB RAM).", icon="✅")
+            pretty_log("Sandbox", "Environment Ready.", icon="✅")
 
     def execute(self, cmd: str, timeout: int = 300):
         try:

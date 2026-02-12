@@ -4,157 +4,82 @@ import re
 import logging
 import uuid
 import datetime
+import ast
+import json
 from pathlib import Path
 from typing import List
 from ..utils.logging import Icons, pretty_log
+from ..utils.sanitizer import sanitize_code
 
 async def tool_execute(filename: str, content: str, sandbox_dir: Path, sandbox_manager, scrapbook=None, args: List[str] = None, memory_dir: Path = None):
-    # --- 🛡️ HIJACK LAYER: CODE SANITIZATION (Verbatim from Granite4) ---
+    # --- 🛡️ HIJACK LAYER: CODE SANITIZATION ---
     
     # 0. VALIDATION: Ensure we are only executing scripts
     ext = str(filename).split('.')[-1].lower()
     if ext not in ["py", "sh", "js"]:
         pretty_log("Execution Blocked", f"Invalid extension: .{ext}", level="WARNING", icon=Icons.STOP)
-        
-        tip = "To save data files like .json or .txt, you MUST use 'file_system(operation=\"write\", ...)' instead."
-        if ext in ["png", "jpg", "jpeg", "pdf", "svg"]:
-            tip = f"To create a .{ext} (plot/image), you MUST write a Python script that saves the file directly (e.g., using 'plt.savefig(\"{filename}\")') and then run that script using 'execute'."
+        tip = "To save data files, use 'file_system(operation=\"write\", ...)' instead."
+        return f"--- EXECUTION ERROR ---\nSYSTEM ERROR: The 'execute' tool is ONLY for running scripts (.py, .sh, .js).\nSYSTEM TIP: {tip}"
 
-        return (
-            f"--- EXECUTION ERROR ---\n"
-            f"SYSTEM ERROR: You are trying to use 'execute' on a .{ext} file. \n"
-            f"The 'execute' tool is ONLY for running scripts (.py, .sh, .js).\n"
-            f"SYSTEM TIP: {tip}"
-        )
+    # 1. Holistic Sanitization
+    content, syntax_error = sanitize_code(content, str(filename))
+    
+    if syntax_error:
+        # We block execution if syntax is clearly invalid to save a roundtrip
+        pretty_log("Sanitization Failed", syntax_error, level="WARNING", icon=Icons.BUG)
+        return f"--- EXECUTION ERROR ---\nSyntax Error Detected: {syntax_error}\nPlease fix the code and try again."
 
-    # 1. Fix "Slash-N" Hallucination
-    if "\\n" in content:
-        content = content.replace("\\n", "\n")
-
-    # 2. Fix Escaped Quotes (Precision Layer)
-    # We only want to fix hallucinated escapes like \" or \' that appear in the middle of text
-    # but LLMs often escape EVERYTHING when they think they are in a JSON string.
-    # However, we must NOT unescape things that are meant to be escaped.
-    # A common LLM hallucination is: print(\"hello\") -> print("hello")
-    # We use a negative lookbehind to ensure we don't unescape \\' or \\"
-    content = re.sub(r'(?<!\\)\\(?P<quote>[\'\"])', r'\1', content)
-
-    # 3. Fix Raw Regex Strings (The r\pattern Crash)
-    # If the LLM writes r\d+ instead of r'\d+', we try to wrap it.
-    try:
-        # Matches r\ followed by characters and wraps it in quotes while preserving the backslash.
-        # We capture everything until a likely delimiter (space, comma, paren, quote, etc.)
-        # We also consume an optional trailing quote to avoid doubling up.
-        content = re.sub(r'(?<![\'"])r\\([^\s,\)\}\]\'\"]+)[\'\"]?', r"r'\\\1'", content)
-    except Exception:
-        pass 
-
-    # 4. Remove Markdown Wrappers
-    content = re.sub(r'^```[a-zA-Z]*\n?', '', content, flags=re.MULTILINE)
-    content = re.sub(r'```$', '', content, flags=re.MULTILINE)
-
-    # 5. Final Trim
+    # 3. Final Trim
     content = content.strip()
     # ----------------------------------------
-
     pretty_log("Execution Task", filename, icon=Icons.TOOL_CODE)
     
     if not sandbox_manager: return "Error: Sandbox manager not initialized."
-    
-    # STRIP LEADING SLASH to prevent absolute path escapes
     rel_path = str(filename).lstrip("/")
     host_path = sandbox_dir / rel_path
     
-    # --- STUBBORNNESS GUARD ---
+    # Stubbornness Guard
     if host_path.exists():
         try:
-            existing_code = host_path.read_text()
-            if "".join(existing_code.split()) == "".join(content.split()):
-                pretty_log("Stubbornness Guard", "Blocked identical code", level="WARNING", icon=Icons.STOP)
-                return (
-                    "--- EXECUTION RESULT ---\n"
-                    "EXIT CODE: 1\n"
-                    "STDOUT/STDERR:\n"
-                    "SYSTEM ERROR: You submitted the EXACT SAME CODE that failed previously. You MUST change the logic.\n"
-                )
+            if "".join(host_path.read_text().split()) == "".join(content.split()):
+                return "--- EXECUTION RESULT ---\nEXIT CODE: 1\nSTDOUT/STDERR:\nSYSTEM ERROR: EXACT SAME CODE SUBMITTED. Change your logic.\n"
         except: pass
 
-    # SELF-HEALING: Auto-create directories
     host_path.parent.mkdir(parents=True, exist_ok=True)
-    
-    # Write sanitized content
-    try:
-        await asyncio.to_thread(host_path.write_text, content)
-    except Exception as e:
-        return f"Error writing script: {e}"
+    try: await asyncio.to_thread(host_path.write_text, content)
+    except Exception as e: return f"Error writing script: {e}"
 
-    # --- AUTO-FORMATTING ---
     if rel_path.endswith(".py"):
         await asyncio.to_thread(sandbox_manager.execute, f"python3 -m black {rel_path}", timeout=15)
 
     try:
-        # EXECUTION COMMAND (Granite4 Wrapper Style)
         ext = rel_path.split('.')[-1].lower()
         runtime_map = {"py": "python3 -u", "js": "node", "sh": "bash"}
         runner = runtime_map.get(ext, "chmod +x" if ext == "sh" else "")
         cmd = f"{runner} {rel_path}" if runner else f"./{rel_path}"
-        
-        if args: 
-            cmd += " " + " ".join([str(a).replace("'", "'\\''") for a in args])
+        if args: cmd += " " + " ".join([str(a).replace("'", "'\\''") for a in args])
 
         wrapper_name = f"_run_{uuid.uuid4().hex[:6]}.sh"
         wrapper_path = sandbox_dir / wrapper_name
         wrapper_path.write_text(f"#!/bin/sh\n{cmd}\n")
         os.chmod(wrapper_path, 0o777)
-
         output, exit_code = await asyncio.to_thread(sandbox_manager.execute, f"./{wrapper_name}")
         wrapper_path.unlink(missing_ok=True)
         
-        # --- GRANITE-STYLE ERROR DIAGNOSTICS ---
         diagnostic_info = ""
         if exit_code != 0:
-            # --- LOG FAILURE FOR AGGREGATE ANALYSIS ---
-            if memory_dir:
-                try:
-                    report_path = memory_dir / "failure_reports.jsonl"
-                    report_entry = {
-                        "timestamp": datetime.datetime.now().isoformat(),
-                        "filename": filename,
-                        "content": content,
-                        "error": output,
-                        "exit_code": exit_code
-                    }
-                    with open(report_path, "a") as f:
-                        f.write(json.dumps(report_entry) + "\n")
-                except Exception as e:
-                    logger.error(f"Failed to log failure report: {e}")
-
             tb_match = re.findall(r'File "([^"]+)", line (\d+),', output)
             if tb_match:
-                last_error_file, last_error_line = tb_match[-1]
-                if os.path.basename(last_error_file) == os.path.basename(rel_path):
-                    try:
-                        line_num = int(last_error_line)
-                        lines = content.splitlines()
-                        start_l = max(0, line_num - 3)
-                        end_l = min(len(lines), line_num + 2)
-                        snippet = "\n".join([f"{i+1}: {l}" for i, l in enumerate(lines) if start_l <= i < end_l])
-                        
-                        diagnostic_info = (
-                            f"\n--- BUG LOCATION (Line {line_num}) ---\n"
-                            f"{snippet}\n"
-                            f"----------------------------------\n"
-                            f"SYSTEM TIP: Look at Line {line_num} above."
-                        )
-                    except: pass
+                _, last_error_line = tb_match[-1]
+                try:
+                    line_num = int(last_error_line)
+                    lines = content.splitlines()
+                    start_l = max(0, line_num - 3)
+                    end_l = min(len(lines), line_num + 2)
+                    snippet = "\n".join([f"{i+1}: {l}" for i, l in enumerate(lines) if start_l <= i < end_l])
+                    diagnostic_info = f"\n--- BUG LOCATION (Line {line_num}) ---\n{snippet}\n----------------------------------\n"
+                except: pass
 
-        return (
-            f"--- EXECUTION RESULT ---\n"
-            f"EXIT CODE: {exit_code}\n"
-            f"STDOUT/STDERR:\n{output}\n"
-            f"{diagnostic_info}\n"
-            f"SYSTEM REMINDER: Execution finished. Check your ACTIVE STRATEGY & CHECKLIST for any remaining meta-tasks (like learning skills or updating profile) before ending the turn."
-        )
-
+        return f"--- EXECUTION RESULT ---\nEXIT CODE: {exit_code}\nSTDOUT/STDERR:\n{output}\n{diagnostic_info}"
     except Exception as e:
-        return f"--- EXECUTION RESULT ---\nEXIT CODE: 1\nSTDOUT/STDERR:\nError: Execution failed: {e}"
+        return f"--- EXECUTION RESULT ---\nEXIT CODE: 1\nSTDOUT/STDERR:\nError: {e}"
