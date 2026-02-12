@@ -34,6 +34,9 @@ class GhostContext:
         self.sandbox_manager = None
         self.scheduler = None
         self.last_activity_time = datetime.datetime.now()
+        # [OPTIMIZATION] State Caching for 8GB RAM Targets
+        self.cached_sandbox_state = None
+
 
 class GhostAgent:
     def __init__(self, context: GhostContext):
@@ -341,8 +344,28 @@ Last Tool Output: {last_tool_output}
                     scratch_data = self.context.scratchpad.list_all() if hasattr(self.context, 'scratchpad') else "None."
                     
                     if has_coding_intent:
-                        from ..tools.file_system import tool_list_files
-                        sandbox_state = await tool_list_files(self.context.sandbox_dir, self.context.memory_system)
+                        # [OPTIMIZATION] State Diffing: Only re-scan if files changed
+                        # We track file modification via tool usage in the previous turn
+                        sandbox_state = self.context.cached_sandbox_state
+                        
+                        # Check if a file modification tool was used in the PREVIOUS turn
+                        # We look at `tools_run_this_turn` which is populated during execution.
+                        # Wait, `tools_run_this_turn` is local to the loop. 
+                        # We need to track if ANY file-modifying tool ran since last scan.
+                        # Let's use a simple heuristic: If cached state is None, scan.
+                        # If a tool runs that modifies files, we wipe the cache.
+                        
+                        if self.context.cached_sandbox_state is None:
+                            from ..tools.file_system import tool_list_files
+                            params = {
+                                "sandbox_dir": self.context.sandbox_dir, 
+                                "memory_system": self.context.memory_system
+                            }
+                            # Use thread pool to avoid blocking the event loop during heavy I/O
+                            sandbox_state = await asyncio.to_thread(lambda: asyncio.run(tool_list_files(**params)) if asyncio.iscoroutinefunction(tool_list_files) else tool_list_files(**params))
+                            self.context.cached_sandbox_state = sandbox_state
+                        else:
+                            sandbox_state = self.context.cached_sandbox_state
                         
                         for m in messages:
                             if m.get("role") == "system":
@@ -440,6 +463,11 @@ Last Tool Output: {last_tool_output}
                         raw_tools_called.add(fname)
                         tool_usage[fname] = tool_usage.get(fname, 0) + 1
                         
+                        # [OPTIMIZATION] Invalidate Cache on File Modification
+                        if fname in ["write_file", "delete_file", "download_file", "git_clone", "unzip", "move_file", "copy_file"]:
+                            self.context.cached_sandbox_state = None
+                            pretty_log("Context Manager", "File system modified - Cache invalidated", icon="🔄")
+
                         # Detect forget operation to block smart memory re-learning
                         if fname == "forget":
                             forget_was_called = True
@@ -508,7 +536,15 @@ Last Tool Output: {last_tool_output}
                             tools_run_this_turn.append(tool_msg)
                             if fname == "execute":
                                 code_match = re.search(r"EXIT CODE:\s*(\d+)", str_res)
-                                exit_code_val = int(code_match.group(1)) if code_match else 1
+                                if code_match:
+                                    exit_code_val = int(code_match.group(1))
+                                else:
+                                    # Fallback: If strict format is missing, check for generic errors
+                                    if "Error" in str_res or "Exception" in str_res or "Traceback" in str_res:
+                                        exit_code_val = 1
+                                    else:
+                                        exit_code_val = 0 # Assume success if no error headers found (risky but better than loop)
+
                                 if exit_code_val != 0:
                                     execution_failure_count += 1
                                     last_was_failure = True
@@ -519,6 +555,9 @@ Last Tool Output: {last_tool_output}
                                         error_preview = str_res.split("STDOUT/STDERR:")[1].strip().replace("\n", " ")
                                     elif "SYSTEM ERROR:" in str_res:
                                         error_preview = str_res.split("SYSTEM ERROR:")[1].strip().split("\n")[0]
+                                    else:
+                                        # Emergency Fallback: Just show the start of the result
+                                        error_preview = str_res[:60].replace("\n", " ")
                                     
                                     pretty_log("Execution Fail", f"Strike {execution_failure_count}/3 -> {error_preview}", icon=Icons.FAIL)
                                     from ..tools.file_system import tool_list_files
@@ -572,13 +611,16 @@ Last Tool Output: {last_tool_output}
                     except Exception as e:
                         logger.error(f"Auto-learning failed: {e}")
 
-                # Cleanup volatile objects
-                del tools_run_this_turn
-                del messages
-                self.release_unused_ram()
-                
                 return final_ai_content, created_time, req_id
         finally:
+            # [OPTIMIZATION] Aggressive Garbage Collection
+            if 'messages' in locals(): del messages
+            if 'tools_run_this_turn' in locals(): del tools_run_this_turn
+            if 'sandbox_state' in locals(): del sandbox_state
+            if 'data' in locals(): del data
+            
+            self.release_unused_ram()
+            
             pretty_log("Request Finished", special_marker="END")
             request_id_context.reset(token)
 

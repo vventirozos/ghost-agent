@@ -56,6 +56,7 @@ class Icons:
     STOP         = "🛑"
     RETRY        = "🔄"
     IDEA         = "💡"
+    BUG          = "🐛"
 
 logger = logging.getLogger("GhostAgent")
 

@@ -28,7 +28,19 @@ def _repair_line(line: str) -> str:
     """
     Applies aggressive regex fixes to a single line based on common hallucinations.
     """
-    # Fix: Trailing backslash or escaped quote at EOL
+    # 0. Strip unexpected trailing backslash (causes: SyntaxError: unexpected character after line continuation)
+    # Only strip if we have an ODD number of trailing backslashes.
+    # e.g. "abc\" -> Strip (1 slash)
+    # e.g. "abc\\" -> Keep (2 slashes = escaped slash)
+    # e.g. "abc\\\" -> Strip (3 slashes)
+    match = re.search(r'(\\+)\s*$', line)
+    if match:
+        num_slashes = len(match.group(1))
+        if num_slashes % 2 != 0:
+            # Remove the last char (the trailing backslash)
+            line = line.rstrip()[:-1]
+
+    # Fix: Trailing backslash or escaped quote at EOL (keep quote if it was escaped)
     # Hallucination: print("...\" ) -> print("...")
     line = re.sub(r'\\([\'"]?)\s*$', r'\1', line)
     line = re.sub(r'\\([\'"]?)\s*\)\s*$', r'\1)', line)
@@ -114,6 +126,10 @@ def sanitize_code(content: str, filename: str) -> Tuple[str, Optional[str]]:
     
     # 1. Extract from Markdown
     content = extract_code_from_markdown(content)
+    
+    # 1.5 Scrub Control Characters (Prevent ^H / Backspace injection)
+    # We allow: \n (10), \r (13), \t (9) and everything >= 32 (Space)
+    content = "".join(ch for ch in content if ord(ch) >= 32 or ch in "\n\r\t")
     
     # 2. Language specific fixes
     if ext == "py":
