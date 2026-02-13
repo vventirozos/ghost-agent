@@ -93,3 +93,29 @@ class LLMClient:
         }
         yield f"data: {json.dumps(stop_chunk)}\n\n".encode('utf-8')
         yield b"data: [DONE]\n\n"
+
+    async def reset_context(self):
+        """
+        Attempts to release the KV cache slots on the upstream LLM server.
+        This helps free up RAM on the inference engine side.
+        """
+        try:
+            # 1. Fetch active slots
+            resp = await self.http_client.get("/slots")
+            if resp.status_code == 200:
+                slots = resp.json()
+                for slot in slots:
+                    slot_id = slot.get("id")
+                    if slot_id is not None:
+                        # Attempt to release/reset the slot. 
+                        # Note: The exact endpoint depends on the server version (llama.cpp/llama-server).
+                        # We try the common 'action=release' pattern.
+                        try:
+                            # Try release (common in some forks)
+                            await self.http_client.post(f"/slots/{slot_id}?action=release")
+                        except: pass
+            
+            pretty_log("LLM Reset", "Triggered context flush on upstream server", icon=Icons.MEM_SAVE)
+        except Exception as e:
+            # Non-critical: If the server doesn't support slot management, we just ignore it.
+            logger.warning(f"Failed to reset LLM context: {e}")

@@ -160,11 +160,35 @@ async def tool_inspect_file(filename: str, sandbox_dir: Path, lines: int = 10):
     except ValueError as ve: return str(ve)
     except Exception as e: return f"Error: {e}"
 
+async def tool_move_file(source: str, destination: str, sandbox_dir: Path) -> str:
+    """
+    Moves/Renames a file from source to destination within the sandbox.
+    """
+    try:
+        src_path = _get_safe_path(sandbox_dir, source)
+        dst_path = _get_safe_path(sandbox_dir, destination)
+
+        if not src_path.exists():
+            return f"Error: Source file '{source}' not found."
+        
+        # Overwrite if exists, consistent with 'mv' command expectations in this context
+        # if dst_path.exists():
+        #     return f"Error: Destination file '{destination}' already exists."
+
+        import shutil
+        shutil.move(src_path, dst_path)
+        return f"Successfully moved '{source}' to '{destination}'."
+    except Exception as e:
+        return f"Error moving file: {e}"
+
 async def tool_file_system(operation: str, sandbox_dir: Path, tor_proxy: str, path: str = None, content: str = None, **kwargs):
+    pretty_log("Tool Call Args", f"Op={operation}, Path={path}, ContentLen={len(content) if content else 0}, Kwargs={kwargs}")
     # Unified mapping for common parameter hallucinations
     url = kwargs.get("url") or (path if path and str(path).startswith("http") else None)
-    target_path = path or kwargs.get("filename") or kwargs.get("path")
-    final_content = content or kwargs.get("data") or kwargs.get("content")
+    
+    potential_path = path if path != url else None
+    target_path = potential_path or kwargs.get("filename") or kwargs.get("path") or kwargs.get("destination") or kwargs.get("file") or kwargs.get("outfile") or kwargs.get("output")
+    final_content = content or kwargs.get("data") or kwargs.get("content") or kwargs.get("text")
 
     # --- HALLUCINATION HEALING ---
     # If the LLM used 'url' as a filename for a non-download operation
@@ -183,6 +207,11 @@ async def tool_file_system(operation: str, sandbox_dir: Path, tor_proxy: str, pa
     
     if operation == "download":
         if not url: return "Error: The 'url' parameter is MANDATORY for download operations."
+        if not target_path:
+            # Automatic inference from URL
+            parsed = urllib.parse.urlparse(str(url))
+            target_path = os.path.basename(parsed.path)
+            if not target_path: target_path = "downloaded_file"
         return await tool_download_file(url=str(url), sandbox_dir=sandbox_dir, tor_proxy=tor_proxy, filename=target_path)
 
     if not target_path: 
@@ -191,4 +220,10 @@ async def tool_file_system(operation: str, sandbox_dir: Path, tor_proxy: str, pa
     if operation == "read": return await tool_read_file(target_path, sandbox_dir)
     if operation == "write": return await tool_write_file(target_path, final_content, sandbox_dir)
     
+    if operation == "move":
+        destination = kwargs.get("destination")
+        if not destination: return "Error: 'destination' argument is MANDATORY for 'move' operation."
+        if not target_path: return "Error: 'path' (source) argument is MANDATORY for 'move' operation."
+        return await tool_move_file(target_path, destination, sandbox_dir)
+
     return f"Unknown operation: {operation}"

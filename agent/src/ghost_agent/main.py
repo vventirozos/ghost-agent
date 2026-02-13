@@ -89,8 +89,9 @@ async def lifespan(app):
         while True:
             await asyncio.sleep(60) # Check every minute
             elapsed = (datetime.datetime.now() - context.last_activity_time).total_seconds()
-            if elapsed >= 120: # 2 Minutes
-                # Reset activity time so we don't clear repeatedly
+            if elapsed >= 600: # 10 Minutes (Auto-Flush)
+                # Reset activity time so we don't clear repeatedly immediately
+                # (Ideally we only clear once per idle session, but resetting timer works)
                 context.last_activity_time = datetime.datetime.now()
                 agent.clear_session()
                 # Also notify any external state managers if needed

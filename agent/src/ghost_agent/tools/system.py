@@ -1,4 +1,5 @@
 import datetime
+import asyncio
 import urllib.parse
 import httpx
 from ..utils.logging import Icons, pretty_log
@@ -150,11 +151,25 @@ async def tool_check_health(context=None):
 
     # 5. Docker Status
     try:
-        docker_res = subprocess.run(["docker", "info", "--format", "{{.ServerVersion}}"], capture_output=True, text=True, timeout=3)
-        if docker_res.returncode == 0:
-            health_status.append(f"Docker: Active (Version {docker_res.stdout.strip()})")
-        else:
-            health_status.append("Docker: Inactive or Not Found")
+        # Use asyncio subprocess to avoid blocking loop and "Event loop closed" warnings
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "info", "--format", "{{.ServerVersion}}",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=3.0)
+            if proc.returncode == 0:
+                version = stdout.decode().strip()
+                health_status.append(f"Docker: Active (Version {version})")
+            else:
+                health_status.append("Docker: Inactive or Not Found")
+        except asyncio.TimeoutError:
+            try:
+                proc.kill()
+                await proc.wait()
+            except: pass
+            health_status.append("Docker: Check Timed Out")
     except Exception:
         health_status.append("Docker: Check Failed")
 

@@ -151,3 +151,78 @@ def test_sanitize_stray_question_marks():
     assert "???" not in sanitized
     assert "x=1" in sanitized
 
+
+def test_repair_line_backslash_comment():
+    # Fix backslash followed by comment (SyntaxError regression)
+    # "x = 1 \ # comment" -> "x = 1"
+    line = "x = 1 \\ # comment"
+    assert _repair_line(line) == "x = 1"
+    
+    # "x = 1 \   # comment with spaces"
+    line2 = "x = 1 \\   # comment"
+    assert _repair_line(line2) == "x = 1"
+
+def test_sanitize_mashed_regex_print():
+    """
+    Test the heuristic that fixes the specific 'mashed' regex/print hallucination.
+    Pattern: len(re.findall(r\\blove print(f"...")))
+    Expected: 
+      len(re.findall(r'\\blove', text))
+      print(f"...")
+    """
+    bad_code = r"""
+import re
+love_count = len(re.findall(r\blove print(f"Love appears {love_count} times.")))
+"""
+    sanitized, err = sanitize_code(bad_code, "test.py")
+    
+    assert "len(re.findall(r'\\blove', text))" in sanitized
+    assert 'print(f"Love appears {love_count} times.")' in sanitized
+    assert err is None # Should be valid syntax now
+
+def test_sanitize_robust_regex_patterns():
+    """
+    Test that the mashed regex heuristic handles robust patterns (digits, groups, etc).
+    """
+    # Case 1: digits
+    code1 = r'len(re.findall(r\d+ print("foo")))'
+    sanitized1, _ = sanitize_code(code1, "test.py")
+    assert "r'\\d+'" in sanitized1
+    assert 'print("foo")' in sanitized1
+
+    # Case 2: groups
+    code2 = r'len(re.findall(r\b(one|two) print("foo")))'
+    sanitized2, _ = sanitize_code(code2, "test.py")
+    assert "r'\\b(one|two)'" in sanitized2
+    
+def test_sanitize_rogue_backslashes():
+    """
+    Test stripping of rogue backslashes that are NOT part of the mashed regex pattern.
+    e.g. random backslashes in code that cause SyntaxError.
+    """
+    # This triggers _last_resort_backslash_fix
+    code = "x = r\\blove" # Invalid syntax if not string? No, r\blove is syntax error?
+    # actually: x = \y is syntax error.
+    # x = r\blove is SyntaxError: unexpected character after line continuation character
+    
+    sanitized, _ = sanitize_code("x = r\\blove", "test.py")
+    # Expected: x = r'\blove' (Now correctly wrapped in quotes by bareword heuristic)
+    assert sanitized.strip() == "x = r'\\blove'"
+
+def test_sanitize_bareword_regex_findall():
+    """
+    Test fix for NameError caused by bareword regexes like r\\blove\\b
+    that were previously stripped to rbloveb.
+    """
+    from ghost_agent.utils.sanitizer import sanitize_code
+    
+    # 1. Complex mashed regex print case (replicates user error)
+    bad_code = "x = len(re.findall(r\\blove\\b, text))"
+    sanitized, _ = sanitize_code(bad_code, "test.py")
+    # Should be quoted now
+    assert "r'\\blove\\b'" in sanitized or 'r"\\blove\\b"' in sanitized
+    
+    # 2. Simple assignment case
+    bad_code_2 = "pattern = r\\d+"
+    sanitized_2, _ = sanitize_code(bad_code_2, "test.py")
+    assert "r'\\d+'" in sanitized_2

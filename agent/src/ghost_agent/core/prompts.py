@@ -23,7 +23,8 @@ You are a high-intelligence AI assistant capable of performing real-world tasks.
     * Rule: Use this for broad topics requiring multiple sources.
 
 3.  **Handling Files (PDFs, URLs, Documents):**
-    * *To Learn/Read:* First `file_system(operation='download', url='...', filename='...')`, THEN `knowledge_base(action='ingest_document', content='filename')`.
+    * *To Learn/Read:* First `file_system(operation='download', url='...')` (or `path='name.txt'` if specified), THEN `knowledge_base(action='ingest_document', content='filename')`.
+    * *To Move/Rename:* `file_system(operation='move', path='source.txt', destination='target.txt')`.
     * *Rule:* You cannot answer questions about a file until you have ingested it into memory.
 
 4.  **Memory & Identity:**
@@ -72,6 +73,7 @@ Complete the user's objective efficiently. If it requires downloading > learning
 
 **🚀 SPECIAL INSTRUCTION:**
 * **DREAM:** If asked to "sleep" or "consolidate", call `dream_mode`.
+* **DOWNLOADS:** `path` is optional (inferred from URL). **HOWEVER**, if the user specifies a desired filename, you **MUST** use the `path` argument to name it correctly.
 """
 
 FACT_CHECK_SYSTEM_PROMPT = """
@@ -158,6 +160,7 @@ You are an internal quality control system. Your goal is to Review code BEFORE i
 2.  **Correctness**: Are imports missing? Are variables defined?
 3.  **Efficiency**: Is there an infinite loop risk?
 4.  **Logic**: Does it actually solve the user's request?
+5.  **HALLUCINATION CHECK**: Do NOT invent library methods (e.g. `json.datetime` does NOT exist). Use standard `import datetime` strategies.
 
 ## OUTPUT FORMAT (JSON ONLY):
 {

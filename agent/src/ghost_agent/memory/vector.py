@@ -42,6 +42,10 @@ class GhostEmbeddingFunction(EmbeddingFunction):
                     logger.error(f"Embedding failed after 3 attempts: {e}")
                     raise
 
+class VectorMemoryError(Exception):
+    """Raised when Vector Memory fails to initialize or operate."""
+    pass
+
 class VectorMemory:
     def __init__(self, memory_dir: Path, upstream_url: str):
         """
@@ -63,7 +67,7 @@ class VectorMemory:
             )
         except Exception as e:
             logger.error(f"Error loading embedding model: {e}")
-            sys.exit(1)
+            raise VectorMemoryError(f"Embedding model failure: {e}")
 
         try:
             self.client = chromadb.PersistentClient(
@@ -89,9 +93,10 @@ class VectorMemory:
                 pretty_log("Memory Conflict", "Embedding provider mismatch. Resetting collection for new provider...", level="WARNING", icon="⚠️")
                 # Fallback: if 'v2' also conflicts (unlikely), we'd need to reset. 
                 # For now, renaming to v2 is the safest non-destructive path.
-                sys.exit(1)
+                raise VectorMemoryError(f"DB Conflict: {e}")
             logger.error(f"CRITICAL DB ERROR: {e}")
             self.collection = None
+            raise VectorMemoryError(f"DB Initialization failure: {e}")
 
     def search_advanced(self, query: str, limit: int = 5):
         results = self.collection.query(

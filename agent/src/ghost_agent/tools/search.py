@@ -144,3 +144,18 @@ async def tool_fact_check(statement: str, http_client, tool_definitions, deep_re
 
     except Exception as e:
         return f"Fact check failure: {e}"
+
+async def tool_read_web_page(url: str):
+    """
+    Reads the text content of a specific URL.
+    Useful for deep reading of search results or specific documentation.
+    """
+    pretty_log("Reading URL", url, icon=Icons.TOOL_FILE_R)
+    try:
+        content = await helper_fetch_url_content(url)
+        if not content: return "Error: content is empty."
+        
+        # Format for readability
+        return f"### CONTENT FROM {url}:\n{content[:8000]}\n[Note: Content truncated at 8000 chars]"
+    except Exception as e:
+        return f"Error reading page: {e}"

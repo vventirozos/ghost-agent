@@ -63,9 +63,26 @@ class GhostAgent:
         """
         Hard reset of the agent's volatile memory.
         """
+        pretty_log("Auto-Flush", "Clearing session memory...", icon=Icons.MEM_SAVE)
+        
+        # 1. Clear Scratchpad
         if hasattr(self.context, 'scratchpad') and self.context.scratchpad:
             self.context.scratchpad.clear()
+            
+        # 2. Clear Sandbox Cache
+        self.context.cached_sandbox_state = None
+        
+        # 3. Clear Profile Memory Cache (if implemented)
+        # (ProfileMemory usually writes to disk, so no RAM cache to clear unless added later)
+
+        # 4. Trigger Upstream LLM Context Reset
+        if self.context.llm_client:
+             # We fire and forget this task to avoid blocking
+             asyncio.create_task(self.context.llm_client.reset_context())
+
+        # 5. Force Python GC and System Memory Trimming
         self.release_unused_ram()
+        pretty_log("Auto-Flush", "RAM released.", icon=Icons.OK)
         return True
 
     def _prepare_planning_context(self, tools_run_this_turn: List[Dict[str, Any]]) -> str:
@@ -342,6 +359,16 @@ Last Tool Output: {last_tool_output}
                             # Check for completion
                             if task_tree.root_id and task_tree.nodes[task_tree.root_id].status == TaskStatus.DONE and turn > 0:
                                 pretty_log("Finalizing", "Agent signaled completion", icon=Icons.OK)
+                                
+                                # Enhance final response with the actual result
+                                result_context = ""
+                                if tools_run_this_turn:
+                                    last_out = tools_run_this_turn[-1]["content"]
+                                    if len(last_out) > 2000: last_out = last_out[:1000] + "\n...[TRUNCATED]...\n" + last_out[-1000:]
+                                    result_context = f"\n\n**Final Result:**\n{last_out}"
+                                
+                                final_ai_content = f"{thought_content}{result_context}"
+                                break
 
                         except Exception as e:
                             logger.error(f"Planning step failed: {e}")
@@ -581,8 +608,9 @@ Last Tool Output: {last_tool_output}
                                     # The Nudge logic will handle the completion.
                                     request_context = (last_user_content + thought_content).lower()
                                     has_meta_intent = any(kw in request_context for kw in ["learn", "skill", "profile", "lesson", "playbook", "record", "save"])
-                                    if not has_meta_intent:
-                                        force_stop = True
+                                    # Removed force_stop for Execute to allow analysis
+                                    # if not has_meta_intent:
+                                    #     force_stop = True
                             
                             elif str_res.startswith("Error:") or str_res.startswith("Critical Tool Error"):
                                 last_was_failure = True
@@ -591,9 +619,10 @@ Last Tool Output: {last_tool_output}
                                     error_preview = str_res.replace("Error:", "").strip()
                                     pretty_log("Tool Warning", f"{fname} -> {error_preview}", icon=Icons.WARN)
                             
-                            elif fname in ["manage_tasks", "learn_skill", "update_profile"] and "SUCCESS" in str_res.upper():
-                                # After fulfilling a meta-task, if we already have a final AI content or a successful execution, stop.
-                                force_stop = True
+                            elif fname in ["manage_tasks", "learn_skill"] and "SUCCESS" in str_res.upper():
+                                # Removed force_stop for meta-tasks to allow confirmation
+                                pass
+                                # force_stop = True
                 
                 if not final_ai_content:
                     if tools_run_this_turn: final_ai_content = f"Task completed successfully. Final tool output:\n\n{tools_run_this_turn[-1]['content']}"
