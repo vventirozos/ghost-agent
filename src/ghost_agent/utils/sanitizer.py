@@ -8,7 +8,9 @@ def extract_code_from_markdown(text: str) -> str:
     """
     Extracts code from markdown blocks if present.
     """
-    code_block_pattern = re.compile(r'```(?:[a-zA-Z]*)\n(.*?)```', re.DOTALL)
+    # Relaxed pattern: Allow missing newline after language identifier
+    # Matches: ```python code... ``` or ```python\ncode...```
+    code_block_pattern = re.compile(r'```(?:[a-zA-Z]*)(?:\n|\s)(.*?)```', re.DOTALL)
     match = code_block_pattern.search(text)
     if match:
         return match.group(1).strip()
@@ -38,11 +40,13 @@ def _repair_line(line: str) -> str:
         num_slashes = len(match.group(1))
         if num_slashes % 2 != 0:
             # Remove the last char (the trailing backslash)
-            line = line.rstrip()[:-1]
+            line = line.rstrip()[:-1].rstrip()
 
     # Fix: Trailing backslash or escaped quote at EOL (keep quote if it was escaped)
     # Hallucination: print("...\" ) -> print("...")
-    line = re.sub(r'\\([\'"]?)\s*$', r'\1', line)
+    # NOTE: We removed the optional '?' from [\'"] so we don't clobber simple trailing backslashes
+    # which are already handled by the odd/even check above.
+    line = re.sub(r'\\([\'"])\s*$', r'\1', line).rstrip()
     line = re.sub(r'\\([\'"]?)\s*\)\s*$', r'\1)', line)
      
     # Fix: hallucinated escape sequences in f-strings or prints
@@ -50,6 +54,9 @@ def _repair_line(line: str) -> str:
     line = re.sub(r'([fbr\(,{])\\([\'"])', r'\1\2', line)
     # \") -> ")
     line = re.sub(r'\\([\'"])([\),])', r'\1\2', line)
+    
+    # Fix: Trailing backticks at EOL (common hallucination: print("hi")`)
+    line = line.rstrip('`')
     
     return line
 
@@ -60,6 +67,7 @@ def fix_python_syntax(code: str) -> str:
     # 0. Brute-force cleanup
     code = re.sub(r'(\?[\w,]{1,3}){3,}', '', code) # Stuttering
     code = re.sub(r'(\?){3,}$', '', code) # Trailing ? sequence (stuttering)
+    code = code.rstrip('`') # Trailing backticks at end of file
     
     if "\\n" in code: # forceful newline fix if it looks like a dump
          # This is dangerous if \n is actually meant to be in a string, 

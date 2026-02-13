@@ -41,8 +41,8 @@ class Dreamer:
         metadatas = results['metadatas']
         embeddings = results['embeddings']
         
-        if len(documents) < 5:
-            return "Not enough entropy to dream. (Need > 5 auto-memories)"
+        if len(documents) < 3:
+            return "Not enough entropy to dream. (Need > 3 auto-memories)"
 
         # 2. Simple Clustering (Distance Based)
         # Since we don't have numpy/sklearn guaranteed in the environment,
@@ -115,6 +115,7 @@ If no obvious merges exist, return empty list.
                     self.memory.collection.delete(ids=stripped_ids)
                     
                     ops_log.append(f"Merged {len(stripped_ids)} items -> '{synthesis[:50]}...'")
+                    pretty_log("Dream Merge", f"Consolidated {len(stripped_ids)} into 1: {synthesis[:40]}...", icon="✨")
 
             summary = "\n".join(ops_log)
             pretty_log("Dream Wake", f"Consolidation Complete:\n{summary}", icon="☀️")

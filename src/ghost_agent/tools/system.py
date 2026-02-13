@@ -12,11 +12,7 @@ async def tool_get_weather(tor_proxy: str, profile_memory=None, location: str = 
     if not location and profile_memory:
         try:
             data = profile_memory.load()
-            found_loc = (
-                data.get("root", {}).get("location") or 
-                data.get("root", {}).get("city") or 
-                data.get("personal", {}).get("location")
-            )
+            found_loc = _find_location_in_profile(data)
             if found_loc:
                 location = found_loc
                 pretty_log("Weather", f"Using profile location: {location}", icon=Icons.MEM_MATCH)
@@ -69,81 +65,145 @@ async def tool_get_weather(tor_proxy: str, profile_memory=None, location: str = 
 
     return "SYSTEM ERROR: Connection failed to all weather providers via Tor."
 
-async def tool_system_utility(action: str, tor_proxy: str, profile_memory=None, location: str = None):
+    return "\n".join(report)
+
+def _find_location_in_profile(data: dict) -> str:
+    """
+    Robustly searches for a location string in the user profile.
+    Prioritizes specific keys (location, city, address) across all categories.
+    """
+    if not data: return None
+    
+    # Priority 1: Explicit Root/Personal keys
+    loc = (
+        data.get("root", {}).get("location") or 
+        data.get("root", {}).get("city") or 
+        data.get("personal", {}).get("location")
+    )
+    if loc: return loc
+
+    # Priority 2: Broad Search in ALL categories
+    search_keys = ["location", "city", "address", "residence", "home"]
+    for cat, subdata in data.items():
+        if isinstance(subdata, dict):
+            for k, v in subdata.items():
+                if k.lower() in search_keys and isinstance(v, str):
+                    return v
+    return None
+
+async def tool_check_location(profile_memory):
+    if not profile_memory: return "Error: Profile memory not loaded."
+    try:
+        data = profile_memory.load()
+        loc = _find_location_in_profile(data)
+        if loc:
+            return f"User Location: {loc}"
+        else:
+            return "User Location: Unknown (Profile has no location data)."
+    except Exception as e:
+        return f"Error checking location: {e}"
+
+import platform
+import shutil
+import os
+import subprocess
+import httpx
+try:
+    import psutil
+except ImportError:
+    psutil = None
+
+async def tool_check_health(context=None):
+    """
+    Performs a real system health check including Docker, Internet, Tor, and Agent Internals.
+    Returns:
+        str: A formatted string containing system statistics.
+    """
+    health_status = ["System Status: Online"]
+    
+    # 1. Platform Info
+    health_status.append(f"OS: {platform.system()} {platform.release()} ({platform.machine()})")
+    
+    # 2. CPU Load (Unix-like)
+    try:
+        load1, load5, load15 = os.getloadavg()
+        health_status.append(f"CPU Load (1/5/15 min): {load1:.2f} / {load5:.2f} / {load15:.2f}")
+    except OSError:
+        pass # Not available on Windows
+
+    if psutil:
+        health_status.append(f"CPU Usage: {psutil.cpu_percent(interval=0.1)}%")
+        
+        # 3. Memory
+        mem = psutil.virtual_memory()
+        health_status.append(f"Memory: {mem.percent}% used ({mem.used // (1024**2)}MB / {mem.total // (1024**2)}MB)")
+        
+        # 4. Disk
+        disk = psutil.disk_usage('/')
+        health_status.append(f"Disk (/): {disk.percent}% used ({disk.free // (1024**3)}GB free)")
+    else:
+        # Fallback for Disk if psutil missing
+        try:
+            total, used, free = shutil.disk_usage("/")
+            health_status.append(f"Disk (/): {(used/total)*100:.1f}% used ({free // (1024**3)}GB free)")
+        except: pass
+
+    # 5. Docker Status
+    try:
+        docker_res = subprocess.run(["docker", "info", "--format", "{{.ServerVersion}}"], capture_output=True, text=True, timeout=3)
+        if docker_res.returncode == 0:
+            health_status.append(f"Docker: Active (Version {docker_res.stdout.strip()})")
+        else:
+            health_status.append("Docker: Inactive or Not Found")
+    except Exception:
+        health_status.append("Docker: Check Failed")
+
+    # 6. Connectivity (Internet & Tor)
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.get("https://1.1.1.1")
+            health_status.append(f"Internet: Connected ({resp.status_code})")
+    except Exception:
+        health_status.append("Internet: Disconnected or Blocked")
+        
+    if context and context.tor_proxy:
+        try:
+            proxy_url = context.tor_proxy.replace("socks5://", "socks5h://")
+            async with httpx.AsyncClient(proxy=proxy_url, timeout=5.0) as client:
+                resp = await client.get("https://check.torproject.org/api/ip")
+                if resp.status_code == 200 and resp.json().get("IsTor", False):
+                    health_status.append("Tor: Connected (Anonymous)")
+                else:
+                    health_status.append("Tor: Connected but Not Anonymous (Check Config)")
+        except Exception as e:
+            health_status.append(f"Tor: Connection Failed ({str(e)})")
+    else:
+        health_status.append("Tor: Not Configured")
+
+    # 7. Agent Internals
+    if context:
+        llm_status = "Active" if context.llm_client else "Offline"
+        mem_status = "Active" if context.memory_system else "Offline"
+        sandbox_status = "Active" if context.sandbox_dir else "Offline"
+        
+        # Scheduler Check
+        sched_status = "Unknown"
+        if context.scheduler:
+            jobs = context.scheduler.get_jobs()
+            sched_status = f"Running ({len(jobs)} jobs)" if context.scheduler.running else "Stopped"
+
+        health_status.append(f"Agent Internals: LLM={llm_status}, Memory={mem_status}, Sandbox={sandbox_status}, Scheduler={sched_status}")
+        
+    return "\n".join(health_status)
+
+async def tool_system_utility(action: str, tor_proxy: str, profile_memory=None, location: str = None, context=None):
     if action == "check_time":
         return await tool_get_current_time()
     elif action == "check_weather":
         return await tool_get_weather(tor_proxy, profile_memory, location)
+    elif action == "check_health":
+        return await tool_check_health(context)
+    elif action == "check_location":
+        return await tool_check_location(profile_memory)
     else:
         return f"Error: Unknown action '{action}'"
-
-async def tool_system_health(upstream_url: str, http_client, sandbox_manager=None, memory_system=None):
-    pretty_log("System Health", "Running diagnostic", icon=Icons.SYSTEM_READY)
-
-    report = ["SYSTEM HEALTH REPORT", "=" * 30]
-
-
-
-    try:
-
-        resp = await http_client.get("/health")
-
-        status = "✅ Online" if resp.status_code == 200 else f"⚠️ Code {resp.status_code}"
-
-        report.append(f"LLM Server      : {status} ({upstream_url})")
-
-    except:
-
-        report.append(f"LLM Server      : ❌ Connection Failed")
-
-
-
-    if sandbox_manager:
-
-        try:
-
-            sandbox_manager.ensure_running()
-
-            out, code = await asyncio.to_thread(sandbox_manager.execute, "timeout 1s sleep 0.1")
-
-            if code == 0:
-
-                report.append(f"Execution Engine: ✅ Active")
-
-            else:
-
-                report.append(f"Execution Engine: ⚠️ Ready (Timeout util failed)")
-
-        except Exception as e:
-
-            report.append(f"Execution Engine: ❌ Critical Error")
-
-    else:
-
-        report.append("Execution Engine: ❌ Sandbox Manager Not Loaded")
-
-
-
-    if memory_system:
-
-        try:
-
-            def get_count():
-
-                return memory_system.collection.count()
-
-            count = await asyncio.to_thread(get_count)
-
-            report.append(f"Memory System   : ✅ Active ({count} items)")
-
-        except Exception as e:
-
-            report.append(f"Memory System   : ❌ DB Error")
-
-    else:
-
-        report.append("Memory System   : ⚠️ Disabled")
-
-
-
-    return "\n".join(report)

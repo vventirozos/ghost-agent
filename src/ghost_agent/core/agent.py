@@ -68,6 +68,17 @@ class GhostAgent:
         self.release_unused_ram()
         return True
 
+    def _prepare_planning_context(self, tools_run_this_turn: List[Dict[str, Any]]) -> str:
+        """
+        Extracts and truncates the last tool output for the planner.
+        Extracted for testability.
+        """
+        last_tool_output = tools_run_this_turn[-1]["content"] if tools_run_this_turn else "None (Start of Task)"
+        # Truncate for prompt efficiency (Target: 5000 chars total)
+        if len(last_tool_output) > 5000: 
+            last_tool_output = last_tool_output[:2500] + "\n...[TRUNCATED]...\n" + last_tool_output[-2500:]
+        return last_tool_output
+
     def process_rolling_window(self, messages: List[Dict[str, Any]], max_tokens: int) -> List[Dict[str, Any]]:
         if not messages: return []
         system_msgs = [m for m in messages if m.get("role") == "system"]
@@ -93,7 +104,7 @@ class GhostAgent:
             # 2. Filter Assistant Meta-Chatter
             if role == "assistant":
                 lower_content = content.lower()
-                if "memory has been updated" in lower_content or "memory stored" in lower_content:
+                if "memory updated" in lower_content or "memory stored" in lower_content:
                     continue
             
             clean_history.append(msg)
@@ -105,8 +116,9 @@ class GhostAgent:
         msg_count = len(clean_history)
         for i, msg in enumerate(clean_history):
             role, content = msg.get("role"), str(msg.get("content", ""))
-            if role == "tool" and (msg_count - i) > 5 and len(content) > 2000:
-                msg["content"] = content[:1000] + "\n... [OLD DATA COMPRESSED] ...\n" + content[-1000:]
+            # [OPTIMIZATION] Relaxed compression for 8k context (was 2000 chars)
+            if role == "tool" and (msg_count - i) > 5 and len(content) > 5000:
+                msg["content"] = content[:2000] + "\n... [OLD DATA COMPRESSED] ...\n" + content[-2000:]
             compressed_history.append(msg)
 
         current_tokens = sum(estimate_tokens(str(m.get("content", ""))) for m in system_msgs)
@@ -173,10 +185,10 @@ class GhostAgent:
                 pretty_log("Request Initialized", special_marker="BEGIN")
                 messages, model, stream_response = body.get("messages", []), body.get("model", "ghost-agent"), body.get("stream", False)
                 
-                # HARD HISTORY TRUNCATION: Prevent client-side history bloat from eating RAM
-                # We physically drop everything older than the last 50 messages at entry
-                if len(messages) > 50:
-                    messages = [m for m in messages if m.get("role") == "system"] + messages[-50:]
+                # HARD HISTORY TRUNCATION: Extended for 8k Context
+                # We physically drop everything older than the last 100 messages at entry
+                if len(messages) > 100:
+                    messages = [m for m in messages if m.get("role") == "system"] + messages[-100:]
 
                 for m in messages:
                     if isinstance(m.get("content"), str): m["content"] = m["content"].replace("\r", "")
@@ -279,9 +291,7 @@ class GhostAgent:
                         pretty_log("Reasoning Loop", f"Turn {turn+1} Strategic Analysis...", icon="🧠")
                         
                         # Prepare Planning Context
-                        last_tool_output = tools_run_this_turn[-1]["content"] if tools_run_this_turn else "None (Start of Task)"
-                        # Truncate for prompt efficiency
-                        if len(last_tool_output) > 1000: last_tool_output = last_tool_output[:500] + "\n...[TRUNCATED]...\n" + last_tool_output[-500:]
+                        last_tool_output = self._prepare_planning_context(tools_run_this_turn)
 
                         planning_prompt = f"""
 ### CURRENT SITUATION

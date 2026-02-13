@@ -15,8 +15,11 @@ async def tool_execute(filename: str, content: str, sandbox_dir: Path, sandbox_m
     # --- 🛡️ HIJACK LAYER: CODE SANITIZATION ---
     
     # Helper for consistent error reporting
-    def _format_error(msg):
-        return f"--- EXECUTION RESULT ---\nEXIT CODE: 1\nSTDOUT/STDERR:\n{msg}"
+    def _format_error(msg, hint=None):
+        out = f"--- EXECUTION RESULT ---\nEXIT CODE: 1\nSTDOUT/STDERR:\n{msg}"
+        if hint:
+            out += f"\n\n--- 💡 DIAGNOSTIC HINT ---\n{hint}\n------------------------"
+        return out
 
     # 0. VALIDATION: Ensure we are only executing scripts
     ext = str(filename).split('.')[-1].lower()
@@ -81,9 +84,12 @@ async def tool_execute(filename: str, content: str, sandbox_dir: Path, sandbox_m
                     start_l = max(0, line_num - 3)
                     end_l = min(len(lines), line_num + 2)
                     snippet = "\n".join([f"{i+1}: {l}" for i, l in enumerate(lines) if start_l <= i < end_l])
-                    diagnostic_info = f"\n--- BUG LOCATION (Line {line_num}) ---\n{snippet}\n----------------------------------\n"
+                    diagnostic_info = f"Error detected at Line {line_num}:\n{snippet}\n\nSUGGESTION: Review the snippet above line {line_num}."
                 except: pass
 
-        return f"--- EXECUTION RESULT ---\nEXIT CODE: {exit_code}\nSTDOUT/STDERR:\n{output}\n{diagnostic_info}"
+        if exit_code != 0:
+             return _format_error(output, hint=diagnostic_info)
+        
+        return f"--- EXECUTION RESULT ---\nEXIT CODE: {exit_code}\nSTDOUT/STDERR:\n{output}"
     except Exception as e:
-        return f"--- EXECUTION RESULT ---\nEXIT CODE: 1\nSTDOUT/STDERR:\nError: {e}"
+        return _format_error(f"Error: {e}")

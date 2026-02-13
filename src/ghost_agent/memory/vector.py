@@ -152,9 +152,9 @@ class VectorMemory:
                 dist = results['distances'][0][0]
                 existing_id = results['ids'][0][0]
 
-                if dist < 0.5:
+                if dist < 0.05:
                     self.collection.delete(ids=[existing_id])
-                    pretty_log("Memory Update", "Replacing existing entry", icon=Icons.RETRY)
+                    pretty_log("Memory Update", f"Refining existing entry (Sim={dist:.2f})", icon=Icons.RETRY)
 
             self.add(text, {"timestamp": get_utc_timestamp(), "type": type_label})
         except Exception as e:
