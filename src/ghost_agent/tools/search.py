@@ -98,7 +98,7 @@ async def tool_fact_check(statement: str, http_client, tool_definitions, deep_re
     ]
 
     payload = {
-        "model": "ghost-agent",
+        "model": "Qwen3-4B-Instruct-2507",
         "messages": messages,
         "tools": restricted_tools,
         "tool_choice": "required"

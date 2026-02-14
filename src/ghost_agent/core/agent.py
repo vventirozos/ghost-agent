@@ -183,12 +183,12 @@ class GhostAgent:
         try:
             async with self.agent_semaphore:
                 pretty_log("Request Initialized", special_marker="BEGIN")
-                messages, model, stream_response = body.get("messages", []), body.get("model", "ghost-agent"), body.get("stream", False)
+                messages, model, stream_response = body.get("messages", []), body.get("model", "Qwen3-4B-Instruct-2507"), body.get("stream", False)
                 
-                # HARD HISTORY TRUNCATION: Extended for 8k Context
-                # We physically drop everything older than the last 100 messages at entry
-                if len(messages) > 100:
-                    messages = [m for m in messages if m.get("role") == "system"] + messages[-100:]
+                # HARD HISTORY TRUNCATION: Extended for 32k+ Context
+                # We physically drop everything older than the last 500 messages at entry
+                if len(messages) > 500:
+                    messages = [m for m in messages if m.get("role") == "system"] + messages[-500:]
 
                 for m in messages:
                     if isinstance(m.get("content"), str): m["content"] = m["content"].replace("\r", "")
@@ -220,7 +220,7 @@ class GhostAgent:
 
                 if has_coding_intent:
                     base_prompt, current_temp = CODE_SYSTEM_PROMPT, 0.2
-                    pretty_log("Mode Switch", "Python Specialist Activated", icon=Icons.TOOL_CODE)
+                    pretty_log("Mode Switch", "Ghost Python Specialist Activated", icon=Icons.TOOL_CODE)
                     if profile_context: base_prompt += f"\n\nUSER CONTEXT (For variable naming only):\n{profile_context}"
                 else:
                     base_prompt, current_temp = SYSTEM_PROMPT.replace("{{PROFILE}}", profile_context), self.context.args.temperature
@@ -287,7 +287,9 @@ class GhostAgent:
                     
                     # --- SYSTEM 2 ADAPTIVE PLANNING ---
                     # Only run reasoning for complex tasks (Coding or non-trivial requests)
-                    if not is_trivial:
+                    # AND if planning is enabled in args (default True if not present, but checked here)
+                    use_plan = getattr(self.context.args, 'use_planning', True)
+                    if use_plan and not is_trivial:
                         pretty_log("Reasoning Loop", f"Turn {turn+1} Strategic Analysis...", icon="🧠")
                         
                         # Prepare Planning Context
@@ -629,7 +631,8 @@ Last Tool Output: {last_tool_output}
             if 'sandbox_state' in locals(): del sandbox_state
             if 'data' in locals(): del data
             
-            self.release_unused_ram()
+            # self.release_unused_ram() # DISABLED: Too aggressive for per-request usage
+
             
             pretty_log("Request Finished", special_marker="END")
             request_id_context.reset(token)

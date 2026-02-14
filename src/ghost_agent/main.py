@@ -38,7 +38,7 @@ def parse_args():
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--verbose", "-v", action="store_true", help="Disable log truncation for debugging")
     parser.add_argument("--no-memory", action="store_true")
-    parser.add_argument("--max-context", type=int, default=8192)
+    parser.add_argument("--max-context", type=int, default=32768)
     parser.add_argument("--api-key", default=os.getenv("GHOST_API_KEY", "ghost-secret-123"))
     parser.add_argument("--smart-memory", type=float, default=0.0)
     parser.add_argument("--anonymous", action="store_true", default=True, help="Always use anonymous search (Tor + DuckDuckGo)")
@@ -84,27 +84,18 @@ async def lifespan(app):
     agent = GhostAgent(context)
     app.state.agent = agent
     
-    # --- IDLE MONITORING TASK ---
-    async def idle_monitor():
-        while True:
-            await asyncio.sleep(60) # Check every minute
-            elapsed = (datetime.datetime.now() - context.last_activity_time).total_seconds()
-            if elapsed >= 120: # 2 Minutes
-                # Reset activity time so we don't clear repeatedly
-                context.last_activity_time = datetime.datetime.now()
-                agent.clear_session()
-                # Also notify any external state managers if needed
-                from .api.routes import clear_global_history
-                clear_global_history()
 
-    monitor_task = asyncio.create_task(idle_monitor())
+    # --- IDLE MONITORING REMOVED ---
+    # The automatic RAM cleanup after inactivity has been disabled per user request.
+    # -------------------------------
+
     # ----------------------------
     
     # Real proactive task runner
     async def proactive_runner(task_id, prompt):
         pretty_log("Proactive Run", f"Task: {task_id}", icon=Icons.BRAIN_PLAN)
         payload = {
-            "model": "ghost-agent",
+            "model": "Qwen3-4B-Instruct-2507",
             "messages": [
                 {"role": "system", "content": "You are in AUTONOMOUS MODE. Execute the task and use tools if needed."},
                 {"role": "user", "content": prompt}

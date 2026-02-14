@@ -36,13 +36,32 @@ async def tool_gain_knowledge(filename: str, sandbox_dir: Path, memory_system):
         raw_name = [line.strip() for line in raw_name.split('\n') if line.strip()][0]
     
     # Strip common prefixes and quotes
-    raw_name = re.sub(r'^(Downloaded|File|Path|Document|Source|Text|Content)\b\s*:?\s*', '', raw_name, flags=re.IGNORECASE)
+    # AWS/GHOST CLEANING PROTOCOL
+    # Detect if the 'filename' is actually a sentence like "The text of 'Romeo...'"
+    if " " in raw_name and len(raw_name.split()) > 3:
+         # Try to extract a potential filename from quotes (e.g. 'romeo_source.txt')
+         # We look for a pattern that ends in a common extension or is just a single word in quotes
+         match = re.search(r"['\"`]+([\w\-\.]+\.[a-zA-Z]{2,4})['\"`]+", raw_name, re.IGNORECASE)
+         if match:
+             raw_name = match.group(1)
+         else:
+             # Fallback: Look for any single word in quotes that looks like a file
+             match_loose = re.search(r"['\"`]+([\w\-\._]+)['\"`]+", raw_name, re.IGNORECASE)
+             if match_loose and "." in match_loose.group(1):
+                 raw_name = match_loose.group(1)
+
+    raw_name = re.sub(r'^(Downloaded|File|Path|Document|Source|Text|Content|Of|The text of)\b\s*:?\s*', '', raw_name, flags=re.IGNORECASE)
     raw_name = raw_name.strip("'\"` ")
     
     # Strip parenthetical info (e.g., "file.pdf (1234 bytes)")
     raw_name = re.sub(r'\s*\([\d\s\w,]+\).*$', '', raw_name, flags=re.IGNORECASE)
     
     filename = raw_name.strip()
+
+    # --- QWEN HALLUCINATION GUARD ---
+    # If the filename starts with '#', 'Title:', or has no extension and spaces, reject it.
+    if filename.startswith("#") or filename.lower().startswith("title:") or (" " in filename and "." not in filename):
+        return f"Error: You passed the document CONTENT or TITLE ('{filename[:30]}...'). You MUST pass the FILENAME (e.g. 'romeo_source.txt')."
 
     if len(filename) > 2000:
         return "Error: Path is too long."

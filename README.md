@@ -1,9 +1,12 @@
 # 👻 Ghost Agent: Autonomous Modular Operator
 
-> **Optimized for High-Performance Operation on Edge Devices (NVIDIA Jetson / Linux)**
+> **Optimized for High-Performance Operation on Edge Devices specifically designed for NVIDIA Jetson nano 8GB **
 
-Ghost Agent is an advanced, autonomous AI operator designed to execute complex coding, research, and system administration tasks with minimal human intervention. It combines **System 2 reasoning** skills with a robust **execution environment** to solve problems iteratively, learn from mistakes, and manage its own memory.
+Ghost Agent is an autonomous AI operator designed to execute complex coding, research, and system administration tasks with minimal human intervention. It combines **System 2 reasoning** skills with a robust **execution environment** to solve problems iteratively, learn from mistakes, and manage its own memory.
 
+---
+Latest release: the agent no longer uses Granite-4-micro as default LLM , it has been aligned with Huihui-Qwen3-4B-Instruct-2507-abliterated.Q4_K_M .
+This change showed very good results in performance (capability) and memory management.
 ---
 
 ## 🧠 Core Intelligence
@@ -75,6 +78,7 @@ The agent has access to a powerful suite of tools:
 git clone https://github.com/ghost-agent/core.git
 cd ghost-agent
 
+
 # Install dependencies
 pip install -r requirements.txt
 ```
@@ -107,4 +111,4 @@ Recent improvements (Feb 2026) have hardened the agent against common failure mo
 ---
 
 **License**: MIT
-**Author**: Ghost Team
+**Author**: EvolMonkey

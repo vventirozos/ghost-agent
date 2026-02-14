@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 from transformers import AutoTokenizer
 
-GRANITE_MODEL_ID = "ibm-granite/granite-4.0-h-micro"
+GRANITE_MODEL_ID = "Qwen/Qwen2.5-Coder-7B-Instruct"
 TOKEN_ENCODER = None
 
 def load_tokenizer(local_tokenizer_path: Path):

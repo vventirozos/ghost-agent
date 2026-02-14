@@ -16,7 +16,7 @@ class Dreamer:
         self.context = agent_context
         self.memory = agent_context.memory_system
 
-    async def dream(self, model_name: str = "ghost-agent"):
+    async def dream(self, model_name: str = "Qwen3-4B-Instruct-2507"):
         """
         Main consolidation loop.
         """

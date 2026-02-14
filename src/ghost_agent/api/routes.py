@@ -57,8 +57,8 @@ async def list_models():
     return {
         "models": [
             {
-                "name": "ghost-agent", "model": "ghost-agent", "modified_at": get_utc_timestamp(),
-                "size": 1000000000, "digest": "sha256:ghostagent",
+                "name": "Qwen3-4B-Instruct-2507", "model": "Qwen3-4B-Instruct-2507", "modified_at": get_utc_timestamp(),
+                "size": 1000000000, "digest": "sha256:qwen3-4b",
                 "details": {"format": "gguf", "family": "llama", "families": ["llama"], "parameter_size": "7B", "quantization_level": "Q4_0"}
             }
         ]
@@ -69,7 +69,7 @@ async def list_openai_models():
     return {
         "object": "list",
         "data": [
-            {"id": "ghost-agent", "object": "model", "created": int(datetime.datetime.now().timestamp()), "owned_by": "ghost-system"}
+            {"id": "Qwen3-4B-Instruct-2507", "object": "model", "created": int(datetime.datetime.now().timestamp()), "owned_by": "ghost-system"}
         ]
     }
 
@@ -128,7 +128,7 @@ async def api_generate(request: Request):
 async def chat_proxy(request: Request, background_tasks: BackgroundTasks):
     agent = get_agent(request)
     body = await request.json()
-    model = body.get("model", "ghost-agent")
+    model = body.get("model", "Qwen3-4B-Instruct-2507")
     stream = body.get("stream", False)
     
     content, created_time, req_id = await agent.handle_chat(body, background_tasks)
