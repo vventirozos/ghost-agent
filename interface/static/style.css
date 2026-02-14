@@ -1,0 +1,243 @@
+:root {
+    --bg-color: #050505;
+    --text-color: #e0e0e0;
+    --accent-color: #8a2be2;
+    --error-color: #ff003c;
+    --success-color: #00ff41;
+    --input-bg: #222;
+    --border-color: #333;
+}
+
+body {
+    margin: 0;
+    padding: 0;
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    font-family: 'Courier New', Courier, monospace;
+    overflow: hidden;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+#app {
+    display: grid;
+    grid-template-rows: 1fr;
+    height: 100%;
+    width: 100%;
+}
+
+#sphere-container {
+    grid-row: 1;
+    position: relative;
+    width: 100%;
+    height: 100%;
+    background: radial-gradient(circle at center, #111 0%, #000 100%);
+    z-index: 0;
+}
+
+#chat-container {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    /* Keeps input at bottom */
+    padding: 20px;
+    box-sizing: border-box;
+    z-index: 10;
+}
+
+#chat-log {
+    flex-grow: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    /* This makes messages stack from bottom up! */
+    gap: 10px;
+    padding-bottom: 20px;
+    padding-top: 50px;
+    /* Space for top messages */
+}
+
+.message {
+    /* Restrict messages to 1/3 of screen to avoid sphere overlap */
+    max-width: 30%;
+    padding: 10px 15px;
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.7);
+    border: 1px solid var(--border-color);
+    pointer-events: auto;
+    /* Clickable/Selectable */
+    word-wrap: break-word;
+    white-space: pre-wrap;
+    /* Preserve newlines */
+    animation: slideUp 0.3s ease;
+}
+
+.message.user {
+    align-self: flex-start;
+    border-left: 3px solid var(--accent-color);
+    color: #fff;
+}
+
+.message.agent {
+    align-self: flex-end;
+    border-right: 3px solid var(--success-color);
+    color: #cfc;
+    text-align: right;
+}
+
+.message.system {
+    align-self: center;
+    max-width: 80%;
+    border: none;
+    color: #666;
+    font-size: 0.8em;
+    text-align: center;
+}
+
+#input-area {
+    display: flex;
+    gap: 10px;
+    pointer-events: auto;
+    background: rgba(0, 0, 0, 0.8);
+    padding: 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    max-width: 800px;
+    margin: 0 auto;
+    width: 100%;
+}
+
+#chat-input {
+    flex-grow: 1;
+    background: var(--input-bg);
+    color: #fff;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    padding: 8px;
+    font-family: inherit;
+    resize: none;
+}
+
+#chat-input:focus {
+    outline: none;
+    border-color: var(--accent-color);
+}
+
+#send-btn {
+    background: var(--accent-color);
+    color: #fff;
+    border: none;
+    padding: 0 20px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: bold;
+    transition: background 0.2s;
+}
+
+#send-btn:hover {
+    background: #6a1b9a;
+}
+
+/* Activity Icon - Constant Glow */
+#activity-container {
+    position: absolute;
+    bottom: 120px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 5;
+    text-align: center;
+}
+
+#activity-icon {
+    font-size: 32px;
+    /* Bigger */
+    color: var(--text-color);
+    opacity: 0.5;
+    transition: all 0.1s;
+    /* Base subdued glow */
+    text-shadow: 0 0 5px rgba(255, 255, 255, 0.2);
+}
+
+#activity-icon.active {
+    opacity: 1;
+    color: #fff;
+    /* Intense Flash */
+    text-shadow: 0 0 20px var(--accent-color), 0 0 40px var(--accent-color);
+    transform: scale(1.2);
+}
+
+#log-container {
+    display: none;
+}
+
+@keyframes slideUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+::-webkit-scrollbar {
+    width: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: #0a0a0a;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #333;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #555;
+}
+
+/* Zen Mode Toggle */
+#fullscreen-btn {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    background: transparent;
+    color: #fff;
+    border: 1px solid var(--border-color);
+    padding: 8px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 1.2em;
+    z-index: 9999;
+    opacity: 0.8;
+    transition: all 0.3s;
+}
+
+#fullscreen-btn:hover {
+    opacity: 1;
+    background: rgba(255, 255, 255, 0.1);
+    border-color: var(--accent-color);
+}
+
+/* Zen Mode: Hide chat interface */
+body.zen-mode #chat-container {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.5s ease;
+}
+
+/* Zen Mode: Ensure icon and sphere remain visible */
+body.zen-mode #activity-container {
+    opacity: 1;
+}

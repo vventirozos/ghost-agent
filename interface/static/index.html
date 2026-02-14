@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ghost Interface</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+
+<body>
+    <button id="fullscreen-btn" title="Toggle Zen Mode"
+        style="position: absolute; top: 20px; left: 20px; z-index: 10000; background: transparent; color: white; border: 1px solid #333; padding: 8px 12px; cursor: pointer;">⛶</button>
+    <div id="app">
+        <div id="sphere-container"></div>
+
+        <div id="activity-container">
+            <div id="activity-icon">⚡</div>
+        </div>
+
+        <div id="chat-container">
+            <div id="chat-log">
+                <!-- Chat messages -->
+            </div>
+            <div id="input-area">
+                <textarea id="chat-input" placeholder="Type a message... (/clear to clear context)" rows="3"></textarea>
+                <button id="send-btn">Send</button>
+            </div>
+        </div>
+
+        <!-- Hidden Logs -->
+        <div id="log-container"></div>
+    </div>
+
+    <script type="module" src="/static/app.js"></script>
+</body>
+
+</html>
