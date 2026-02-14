@@ -7,6 +7,7 @@ import re
 import gc
 import ctypes
 import platform
+import httpx
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 
