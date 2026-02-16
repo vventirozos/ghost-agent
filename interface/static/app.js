@@ -1,4 +1,4 @@
-import { initSphere, updateSphereColor, triggerSpike, triggerPulse, setWorkingState, setWaitingState } from './sphere.js';
+import { initSphere, updateSphereColor, triggerSpike, triggerPulse, setWorkingState, setWaitingState, triggerNextColor } from './sphere.js';
 
 const chatLog = document.getElementById('chat-log');
 const chatInput = document.getElementById('chat-input');
@@ -7,8 +7,10 @@ const activityIcon = document.getElementById('activity-icon');
 const fullscreenBtn = document.getElementById('fullscreen-btn');
 const statusText = document.getElementById('status-text');
 const connectionDot = document.getElementById('connection-dot');
+const plannerMonologue = document.getElementById('planner-monologue');
 
 let ws;
+let monologueTimeout;
 let chatHistory = [];
 const wsUrl = `ws://${window.location.host}/ws`;
 
@@ -42,6 +44,12 @@ function connectWebSocket() {
                 }
                 flashActivityIcon();
                 if (data.is_error) triggerSpike();
+
+                // Check for Planner Monologue
+                const plannerMatch = data.content.match(/PLANNER MONOLOGUE\s*:\s*(.*)/);
+                if (plannerMatch && plannerMatch[1]) {
+                    showPlannerMonologue(plannerMatch[1]);
+                }
             }
         } catch (e) { console.error("WebSocket Error:", e); }
     };
@@ -53,6 +61,26 @@ function connectWebSocket() {
         }
         setTimeout(connectWebSocket, 3000);
     };
+}
+
+function showPlannerMonologue(text) {
+    if (!plannerMonologue) return;
+    plannerMonologue.textContent = text.trim();
+    plannerMonologue.classList.add('visible');
+
+    // Clear any existing hide timer so it stays visible while updating
+    clearTimeout(monologueTimeout);
+
+    // If we are NOT currently processing a request (e.g. late logs after reply),
+    // ensure we still auto-hide after a short delay so it doesn't get stuck open.
+    if (!isProcessingRequest) {
+        monologueTimeout = setTimeout(hidePlannerMonologue, 2000);
+    }
+}
+
+function hidePlannerMonologue() {
+    if (!plannerMonologue) return;
+    plannerMonologue.classList.remove('visible');
 }
 
 function extractIcon(logLine) {
@@ -104,7 +132,12 @@ function flashActivityIcon() {
 function addMessage(role, text) {
     const div = document.createElement('div');
     div.className = `message ${role}`;
-    div.textContent = text;
+    // Use marked.parse if available (it is added in index.html)
+    if (window.marked) {
+        div.innerHTML = marked.parse(text);
+    } else {
+        div.textContent = text;
+    }
     chatLog.appendChild(div);
     scrollToBottom();
     return div;
@@ -183,6 +216,9 @@ async function sendMessage() {
             activityIcon.classList.remove('working');
         }
         setTimeout(scrollToBottom, 100);
+
+        // Auto-hide planner monologue 2 seconds after reply
+        monologueTimeout = setTimeout(hidePlannerMonologue, 2000);
     }
 }
 

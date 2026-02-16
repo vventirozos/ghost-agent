@@ -16,6 +16,9 @@ let targetWorkingState = 0.0;
 let waitingState = 0.0;
 let targetWaitingState = 0.0;
 
+let colorOffset = 0.0;
+let targetColorOffset = 0.0;
+
 // Deep eerie color palette - darker base
 let baseColor = new THREE.Color(0x010103);
 let glowColor = new THREE.Color(0x2a003b); // Deep Purple start
@@ -194,9 +197,9 @@ void main() {
     // Smooth mix based on activity
     color = mix(idleState, busyState, activity);
     
-    // Visceral Error Override
+    // Visceral Error Override - NEON RED
     if (uErrorState > 0.0) {
-        vec3 errPulse = vec3(0.8, 0.0, 0.0) * (0.5 + 0.5 * sin(uTime * 12.0)); // Dark red error
+        vec3 errPulse = vec3(5.0, 0.0, 0.0) * (0.8 + 0.2 * sin(uTime * 30.0)); // Intense Neon Red + fast flicker
         color = mix(color, errPulse * (diff1 + fresnel * 2.0), uErrorState);
     }
     
@@ -265,11 +268,11 @@ export function initSphere() {
     animate();
 }
 
-// Palette for idle color rotation
+// Palette for idle color rotation - DARK GREEN, BLUE, PURPLE, RED
 const palette = [
-    new THREE.Color(0x2a003b), // Deep Purple
-    new THREE.Color(0x000c3b), // Dark Blue
     new THREE.Color(0x003b0c), // Dark Green
+    new THREE.Color(0x000c3b), // Dark Blue
+    new THREE.Color(0x2a003b), // Dark Purple
     new THREE.Color(0x3b0000)  // Dark Red
 ];
 let paletteColor = new THREE.Color();
@@ -282,8 +285,8 @@ function animate() {
 
     // State machine controls how heavily the geometry deforms
     if (targetErrorState > 0.5) {
-        targetSpikeStrength = 0.5; // Reduced max spike strength (0.8 -> 0.5)
-        rotationSpeedY = 0.005;
+        targetSpikeStrength = 2.5; // MASSIVE spike strength for error
+        rotationSpeedY = 0.02; // Spin faster
     } else if (targetWorkingState > 0.5 || targetWaitingState > 0.5) {
         targetSpikeStrength = 0.4 + Math.sin(time * 5.0) * 0.1; // Reduced working spikes (0.6 -> 0.4)
         rotationSpeedY = 0.003;
@@ -292,15 +295,23 @@ function animate() {
         targetSpikeStrength = 0.15 + Math.sin(time * 1.5) * 0.05;
     }
 
-    // Always run organic color rotation regardless of state
-    let cycleSpeed = 0.05; // Slower, more hypnotic
-    let cycleIndex = (time * cycleSpeed) % palette.length;
-    let index1 = Math.floor(cycleIndex);
+    // Hybrid Color Rotation:
+    // Base idle rotation varies slowly with time
+    // Event-driven rotation adds a persistent offset
+
+    // Smoothly interpolate the offset
+    colorOffset += (targetColorOffset - colorOffset) * 0.02; // Tuned for ~3s transition
+
+    let cycleSpeed = 0.05; // Base idle speed
+    // Effective index combines time-based rotation and the event-driven offset
+    let effectiveIndex = (time * cycleSpeed + colorOffset) % palette.length;
+
+    let index1 = Math.floor(effectiveIndex);
     let index2 = (index1 + 1) % palette.length;
-    let alpha = cycleIndex - index1;
+    let alpha = effectiveIndex - index1;
 
     paletteColor.copy(palette[index1]).lerp(palette[index2], alpha);
-    targetGlowColor.lerp(paletteColor, 0.01);
+    targetGlowColor.lerp(paletteColor, 0.05); // Faster lerp to track the offset change smoothly
 
     // Soft interpolations - Tuned for organic feeling (0.01)
     // Asymmetric transitions: 
@@ -346,7 +357,10 @@ export function updateSphereColor(colorHex) {
     // Organic rotation overrides manual color sets
     // if(colorHex) targetGlowColor.set(colorHex); 
 }
-export function triggerSpike() { targetErrorState = 1.0; setTimeout(() => { targetErrorState = 0.0; }, 800); }
+export function triggerSpike() { targetErrorState = 1.0; setTimeout(() => { targetErrorState = 0.0; }, 2000); }
+export function triggerNextColor() {
+    targetColorOffset += 1.0; // Advance one full color step
+}
 export function triggerPulse(colorHex = '#2a003b') {
     // Organic rotation overrides manual color sets
     // if(colorHex) targetGlowColor.set(colorHex); 

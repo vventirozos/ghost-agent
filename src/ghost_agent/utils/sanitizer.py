@@ -10,7 +10,9 @@ def extract_code_from_markdown(text: str) -> str:
     """
     # Relaxed pattern: Allow missing newline after language identifier
     # Matches: ```python code... ``` or ```python\ncode...```
-    code_block_pattern = re.compile(r'```(?:[a-zA-Z]*)(?:\n|\s)(.*?)```', re.DOTALL)
+    # Relaxed pattern: Matches ``` then optional language, then any newline/space, then code, then ```
+    # handle optional spaces before language, and lenient newline check
+    code_block_pattern = re.compile(r'```[ \t]*(?:[a-zA-Z]+)?(?:[ \t]*\n|[ \t]+)(.*?)```', re.DOTALL)
     match = code_block_pattern.search(text)
     if match:
         return match.group(1).strip()

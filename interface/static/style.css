@@ -58,8 +58,8 @@ body {
 header {
     display: flex;
     justify-content: space-between;
-    align-items: center;
-    padding: 24px 32px;
+    align-items: flex-start;
+    padding: 16px 32px;
     pointer-events: auto;
     flex-shrink: 0;
     background: linear-gradient(to bottom, rgba(0, 0, 0, 0.6) 0%, transparent 100%);
@@ -419,4 +419,98 @@ body.zen-mode #activity-container {
         width: 44px;
         height: 44px;
     }
+}
+
+/* Planner Monologue */
+#status-wrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+}
+
+#planner-monologue {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    color: #bd00ff;
+    text-shadow: 0 0 8px rgba(189, 0, 255, 0.6);
+    max-width: 600px;
+    line-height: 1.4;
+    opacity: 0;
+    height: 0;
+    overflow: hidden;
+    transition: all 0.5s ease;
+    padding-left: 4px;
+}
+
+#planner-monologue.visible {
+    opacity: 1;
+    height: auto;
+    margin-top: 4px;
+}
+
+/* Markdown Styles in Chat */
+.message p {
+    margin: 0 0 10px 0;
+}
+
+.message p:last-child {
+    margin-bottom: 0;
+}
+
+.message pre {
+    background: rgba(0, 0, 0, 0.3);
+    padding: 12px;
+    border-radius: 8px;
+    overflow-x: auto;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    margin: 10px 0;
+}
+
+.message code {
+    font-family: var(--font-mono);
+    font-size: 0.9em;
+    background: rgba(255, 255, 255, 0.1);
+    padding: 2px 4px;
+    border-radius: 4px;
+}
+
+.message pre code {
+    background: transparent;
+    padding: 0;
+    border-radius: 0;
+    color: #a5d6ff;
+}
+
+.message ul,
+.message ol {
+    margin: 10px 0;
+    padding-left: 20px;
+}
+
+.message li {
+    margin-bottom: 4px;
+}
+
+.message strong {
+    font-weight: 600;
+    color: #fff;
+}
+
+.message a {
+    color: var(--accent-color);
+    text-decoration: none;
+    border-bottom: 1px dashed var(--accent-color);
+}
+
+.message a:hover {
+    text-shadow: 0 0 8px var(--accent-color);
+}
+
+.message blockquote {
+    border-left: 3px solid var(--secondary-color);
+    margin: 10px 0;
+    padding-left: 12px;
+    color: rgba(255, 255, 255, 0.7);
+    font-style: italic;
 }

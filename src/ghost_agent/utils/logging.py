@@ -96,10 +96,10 @@ def pretty_log(title: str, content: Any = None, icon: str = "📝", level: str =
         print(f"[{level:5}] {Icons.REQ_DONE} {timestamp} - [{req_id}] {'='*15} REQUEST FINISHED {'='*15}", flush=True)
         return
     if special_marker == "SECTION_START":
-        print(f"[{level:5}] {icon} {timestamp} - [{req_id}] {'='*15} {title} STARTED {'='*15}", flush=True)
+        print(f"[{level:5}] {icon} {timestamp} - [{req_id}] {'_'*10} {title} STARTED {'_'*10}", flush=True)
         return
     if special_marker == "SECTION_END":
-        print(f"[{level:5}] {icon} {timestamp} - [{req_id}] {'='*15} {title} ENDED {'='*15}", flush=True)
+        print(f"[{level:5}] {icon} {timestamp} - [{req_id}] {'_'*10} {title} ENDED {'_'*12}", flush=True)
         return
 
     # 1. Title formatting (Upper, fixed width)

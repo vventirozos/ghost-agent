@@ -81,6 +81,17 @@ class GhostAgent:
             last_tool_output = last_tool_output[:2500] + "\n...[TRUNCATED]...\n" + last_tool_output[-2500:]
         return last_tool_output
 
+    def _get_recent_transcript(self, messages: List[Dict[str, Any]]) -> str:
+        recent_transcript = ""
+        transcript_msgs = [m for m in messages if m.get("role") in ["user", "assistant", "tool"]][-10:]
+        for m in transcript_msgs:
+            content = m.get('content') or ""
+            role = m['role'].upper()
+            if role == "TOOL":
+                role = f"TOOL ({m.get('name', 'unknown')})"
+            recent_transcript += f"{role}: {content[:500]}\n"
+        return recent_transcript
+
     def process_rolling_window(self, messages: List[Dict[str, Any]], max_tokens: int) -> List[Dict[str, Any]]:
         if not messages: return []
         system_msgs = [m for m in messages if m.get("role") == "system"]
@@ -266,11 +277,7 @@ class GhostAgent:
                         pretty_log("Reasoning Loop", f"Turn {turn+1} Strategic Analysis...", icon=Icons.BRAIN_PLAN)
                         
                         last_tool_output = self._prepare_planning_context(tools_run_this_turn)
-                        recent_transcript = ""
-                        transcript_msgs = [m for m in messages if m.get("role") in ["user", "assistant"]][-4:]
-                        for m in transcript_msgs:
-                            content = m.get('content') or ""
-                            recent_transcript += f"{m['role'].upper()}: {content[:500]}\n"
+                        recent_transcript = self._get_recent_transcript(messages)
                             
                         planning_prompt = f""" ### CURRENT SITUATION
 ### RECENT CONVERSATION:
@@ -507,6 +514,7 @@ Last Tool Output: {last_tool_output}
                                     tool["function"]["arguments"] = json.dumps(t_args)
                                     messages.append({"role": "system", "content": f"RED TEAM INTERVENTION: Your code was auto-corrected before execution.\nCritique: {critique}\nExecuting patched version."})
                                 elif not is_approved:
+                                    pretty_log("Red Team Block", f"{critique}", icon=Icons.SHIELD)
                                     messages.append({"role": "tool", "tool_call_id": tool["id"], "name": fname, "content": f"RED TEAM BLOCK: {critique}. Rewrite the code."})
                                     last_was_failure = True
                                     continue
@@ -654,7 +662,15 @@ Last Tool Output: {last_tool_output}
             if result.get("status") == "APPROVED":
                 return True, None, "Approved"
             else:
-                return False, result.get("revised_code"), result.get("critique", "Unspecified issue")
+                revised_code = result.get("revised_code")
+                if revised_code:
+                    from ..utils.sanitizer import extract_code_from_markdown
+                    revised_code = extract_code_from_markdown(revised_code)
+                    
+                    # Double-check for leaked backticks or inline code style (if extract failed to strip them)
+                    if revised_code.startswith("`") and revised_code.endswith("`"):
+                        revised_code = revised_code.strip("`")
+                return False, revised_code, result.get("critique", "Unspecified issue")
                 
         except Exception as e:
             logger.error(f"Critic failed: {e}")
