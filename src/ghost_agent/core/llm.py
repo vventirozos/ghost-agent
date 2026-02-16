@@ -9,16 +9,22 @@ from ..utils.helpers import get_utc_timestamp
 logger = logging.getLogger("GhostAgent")
 
 class LLMClient:
-    def __init__(self, upstream_url: str):
+    def __init__(self, upstream_url: str, tor_proxy: str = None):
         self.upstream_url = upstream_url
         limits = httpx.Limits(max_keepalive_connections=5, max_connections=10)
-        # Explicitly disable proxy for LLM connections to avoid routing through Tor
-        # Using a custom transport to ensure proxy=None is respected and handle low-level issues
+        
+        # Determine if we need to route through Tor
+        # If upstream is NOT localhost, we force Tor usage
+        proxy_url = None
+        if "127.0.0.1" not in upstream_url and "localhost" not in upstream_url and tor_proxy:
+            proxy_url = tor_proxy.replace("socks5://", "socks5h://")
+            pretty_log("LLM Connection", f"Routing upstream traffic via Tor ({proxy_url})", icon=Icons.SHIELD)
+
         self.http_client = httpx.AsyncClient(
             base_url=upstream_url, 
             timeout=600.0, 
             limits=limits,
-            proxy=None,
+            proxy=proxy_url,
             follow_redirects=True,
             http2=False
         )

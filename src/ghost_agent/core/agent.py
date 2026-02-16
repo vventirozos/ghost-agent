@@ -105,7 +105,7 @@ class GhostAgent:
             # 2. Filter Assistant Meta-Chatter
             if role == "assistant":
                 lower_content = content.lower()
-                if "memory updated" in lower_content or "memory stored" in lower_content:
+                if ("memory updated" in lower_content or "memory stored" in lower_content) and len(content) < 100:
                     continue
             
             clean_history.append(msg)
@@ -177,8 +177,8 @@ class GhostAgent:
                         self.context.profile_memory.update(profile_up.get("category", "notes"), profile_up.get("key", "info"), profile_up.get("value", fact))
             except Exception as e: logger.error(f"Smart memory task failed: {e}")
 
-    async def handle_chat(self, body: Dict[str, Any], background_tasks):
-        req_id = str(uuid.uuid4())[:8]
+    async def handle_chat(self, body: Dict[str, Any], background_tasks, request_id: Optional[str] = None):
+        req_id = request_id or str(uuid.uuid4())[:8]
         token = request_id_context.set(req_id)
         self.context.last_activity_time = datetime.datetime.now()
         try:
@@ -296,8 +296,18 @@ class GhostAgent:
                         # Prepare Planning Context
                         last_tool_output = self._prepare_planning_context(tools_run_this_turn)
 
+                        # Extract recent conversation for context (System 2 Amnesia Fix)
+                        recent_transcript = ""
+                        transcript_msgs = [m for m in messages if m.get("role") in ["user", "assistant"]][-4:]
+                        for m in transcript_msgs:
+                            content = m.get('content') or ""
+                            recent_transcript += f"{m['role'].upper()}: {content[:500]}\n"
+
                         planning_prompt = f"""
 ### CURRENT SITUATION
+### RECENT CONVERSATION:
+{recent_transcript}
+
 User Request: {last_user_content}
 Last Tool Output: {last_tool_output}
 

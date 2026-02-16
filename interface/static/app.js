@@ -1,232 +1,218 @@
-import { initSphere, updateSphereColor, triggerSpike, triggerPulse, setWorkingState } from './sphere.js';
+import { initSphere, updateSphereColor, triggerSpike, triggerPulse, setWorkingState, setWaitingState } from './sphere.js';
 
-// DOM Elements
 const chatLog = document.getElementById('chat-log');
 const chatInput = document.getElementById('chat-input');
 const sendBtn = document.getElementById('send-btn');
 const activityIcon = document.getElementById('activity-icon');
 const fullscreenBtn = document.getElementById('fullscreen-btn');
+const statusText = document.getElementById('status-text');
+const connectionDot = document.getElementById('connection-dot');
 
-// WebSocket connection
 let ws;
+let chatHistory = [];
 const wsUrl = `ws://${window.location.host}/ws`;
 
-// Icons that signify "Working" state
-const WORKING_ICONS = new Set(['🎬', '⏳', '💭', '📋', '🧩', '🗣️', '🌐', '🔬', '🐍', '🐚', '💾', '📖', '🔍', '⬇️', '📝', '🔎', '📚', '✂️', '🧬']);
-// Icons that signify "Idle" state - STRICT: Wait for Finish
-const IDLE_ICONS = new Set(['🏁', '🚀', '💤', '🛑']); // Removed ✅ and ⚠️ and ❌ (Error should spike but not necessarily stop if it retries, though typically error stops. Let's keep Error as spike only, or maybe stop on error? User said wait for completion. Let's allow 🛑/🏁/💤 to stop it.)
+const WORKING_ICONS = new Set(['🧠', '🔍', '⚙️', '🔨', '⚡', '💡', '📡', '💾', '🛡️', '🔑', '🔓', '🚀', '🔮', '🧬', '🔬', '🔭', '🩺', '🧩', '📈', '📊', '📋']);
+const IDLE_ICONS = new Set(['✅', '❌', '🛑', '😴', '💤']);
+
+let isProcessingRequest = false;
 
 function connectWebSocket() {
     ws = new WebSocket(wsUrl);
-    ws.onopen = () => console.log("System: Connected");
+    ws.onopen = () => {
+        if (statusText) statusText.textContent = "SYSTEM ONLINE";
+        if (connectionDot) {
+            connectionDot.style.boxShadow = "0 0 10px #00ff9d";
+            connectionDot.style.backgroundColor = "#00ff9d";
+        }
+    };
     ws.onmessage = (event) => {
         try {
             const data = JSON.parse(event.data);
             if (data.type === 'log') {
-                const logLine = data.content;
-                const icon = extractIcon(logLine);
-
-                // Determine Flash Color based on Icon
+                const icon = extractIcon(data.content);
                 const flashColor = getIconColor(icon);
-                triggerPulse(flashColor);
+
+                triggerPulse(flashColor); // Always heartbeat on new log
 
                 if (icon) {
                     updateActivityIcon(icon);
                     updateStateFromIcon(icon);
-
-                    // FIX: Force Spike for Error Icons even if log level is INFO
-                    if (['❌', '⚠️', '🔥', '🚫'].includes(icon)) {
-                        triggerSpike();
-                    }
+                    if (['❌', '🛑', '⚠️', '🔥'].includes(icon)) triggerSpike();
                 }
-
-                // Keep the flash effect
                 flashActivityIcon();
-
                 if (data.is_error) triggerSpike();
             }
-        } catch (e) {
-            console.error("WebSocket Error:", e);
-        }
+        } catch (e) { console.error("WebSocket Error:", e); }
     };
     ws.onclose = () => {
+        if (statusText) statusText.textContent = "DISCONNECTED";
+        if (connectionDot) {
+            connectionDot.style.backgroundColor = "#ff2a2a";
+            connectionDot.style.boxShadow = "none";
+        }
         setTimeout(connectWebSocket, 3000);
     };
 }
 
 function extractIcon(logLine) {
-    // Robust Emoji Regex to find the first emoji in the string
-    // This matches standard emojis and extended pictographs
-    const emojiRegex = /(\p{Extended_Pictographic})/u;
-    const match = logLine.match(emojiRegex);
-
-    if (match) {
-        return match[0];
-    }
-    return null;
+    const match = logLine.match(/(\p{Extended_Pictographic})/u);
+    return match ? match[0] : null;
 }
 
 function getIconColor(icon) {
-    // Cognitive / Thinking -> Cyan
-    if (['💭', '📋', '🧐', '🧠'].includes(icon)) return '#00FFFF';
-
-    // Coding / Execution -> Matrix Green
-    if (['🐍', '🛠️', '✂️', '🧩', '⚙️'].includes(icon)) return '#00FF41';
-
-    // I/O / Data -> Orange
-    if (['💾', '📂', '📝', '🔍', '🔎', '📚', '📖'].includes(icon)) return '#FF8C00';
-
-    // Network / Web -> Blue
-    if (['🌐', '⬇️', '☁️', '📡'].includes(icon)) return '#1E90FF';
-
-    // Error / Critical -> Red
-    if (['❌', '⚠️', '🔥', '🚫'].includes(icon)) return '#FF0000';
-
-    // System / Status -> White
-    if (['🏁', '🚀', '🎬', '✅', '🛑'].includes(icon)) return '#FFFFFF';
-
-    // Default -> Cyan
-    return '#00FFFF';
+    if (['🧠', '💡', '🔮', '🧬', '🧩'].includes(icon)) return '#00f3ff';
+    if (['✅', '🔧', '🔨', '⚙️', '🛡️', '🔓'].includes(icon)) return '#00ff9d';
+    if (['🔍', '💾', '📈', '📊', '📋', '🔑'].includes(icon)) return '#ffaa00';
+    if (['📡', '⚡', '🚀', '🔭'].includes(icon)) return '#1e90ff';
+    if (['❌', '🛑', '⚠️', '🔥'].includes(icon)) return '#ff2a2a';
+    if (['😴', '💤', '🩺', '🔬'].includes(icon)) return '#ffffff';
+    return '#bd00ff';
 }
 
-function updateActivityIcon(icon) {
-    activityIcon.textContent = icon;
-}
+function updateActivityIcon(icon) { if (activityIcon) activityIcon.textContent = icon; }
 
+let workTimer;
 function updateStateFromIcon(icon) {
+    if (isProcessingRequest) return; // Prevent logs from turning off the active state during a request
+
     if (WORKING_ICONS.has(icon)) {
         setWorkingState(true);
-        activityIcon.classList.add('working');
-        activityIcon.classList.add('active');
+        if (activityIcon) activityIcon.classList.add('working');
+        clearTimeout(workTimer);
+        workTimer = setTimeout(() => {
+            if (!isProcessingRequest) {
+                setWorkingState(false);
+                if (activityIcon) activityIcon.classList.remove('working');
+            }
+        }, 2000);
     } else if (IDLE_ICONS.has(icon)) {
         setWorkingState(false);
-        activityIcon.classList.remove('working');
-        activityIcon.classList.remove('active');
+        if (activityIcon) activityIcon.classList.remove('working');
     }
 }
 
 let iconTimeout;
 function flashActivityIcon() {
-    // Only flash if NOT working (working state keeps it on)
-    if (!activityIcon.classList.contains('working')) {
-        activityIcon.classList.add('active');
+    if (activityIcon && !activityIcon.classList.contains('working')) {
+        activityIcon.style.transform = "scale(1.2)";
         clearTimeout(iconTimeout);
-        iconTimeout = setTimeout(() => {
-            activityIcon.classList.remove('active');
-        }, 100);
+        iconTimeout = setTimeout(() => { activityIcon.style.transform = "scale(1)"; }, 150);
     }
 }
 
-// Chat functions
 function addMessage(role, text) {
     const div = document.createElement('div');
     div.className = `message ${role}`;
     div.textContent = text;
     chatLog.appendChild(div);
-    chatLog.scrollTop = chatLog.scrollHeight;
+    scrollToBottom();
     return div;
 }
 
+function scrollToBottom() {
+    requestAnimationFrame(() => { chatLog.scrollTo({ top: chatLog.scrollHeight, behavior: 'smooth' }); });
+}
+
+// Auto-expand textarea height organically
+chatInput.addEventListener('input', function () {
+    this.style.height = 'auto';
+    this.style.height = (this.scrollHeight) + 'px';
+    if (this.value === '') this.style.height = 'auto';
+});
+
 async function sendMessage() {
     const text = chatInput.value.trim();
-    if (!text) return;
+    if (!text || isProcessingRequest) return;
 
     chatInput.value = '';
+    chatInput.style.height = 'auto'; // Reset height perfectly
     addMessage('user', text);
 
     if (text === '/clear') {
         chatLog.innerHTML = '';
+        chatHistory = [];
         const msg = addMessage('system', 'Context cleared');
         setTimeout(() => { msg.remove(); }, 2000);
+
         return;
     }
 
-    // Optimistic Start (Logs will confirm/deny)
+    // Explicitly lock the blob into an active state
+    isProcessingRequest = true;
     setWorkingState(true);
-    activityIcon.textContent = '🎬';
-    activityIcon.classList.add('working');
-    activityIcon.classList.add('active');
+    setWaitingState(true);
+    if (activityIcon) {
+        activityIcon.textContent = '🧠';
+        activityIcon.classList.add('working');
+    }
 
     try {
-        // FIX: Send OpenAI-compatible 'messages' array, not just 'prompt'
-        const payload = {
-            model: "Qwen3-4B-Instruct-2507", // Default model
-            messages: [
-                { role: "user", content: text }
-            ]
-        };
-
+        chatHistory.push({ role: "user", content: text });
+        const payload = { model: "Qwen3-4B-Instruct-2507", messages: chatHistory };
         const response = await fetch('/api/chat', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         });
-
         const data = await response.json();
 
-        // Fix: Ignore empty string errors
-        let hasError = false;
         if (data.error && data.error !== "") {
-            hasError = true;
-        }
-
-        if (hasError) {
             addMessage('system', `Error: ${data.error}`);
             triggerSpike();
         } else {
             let content = "No response";
-
-            if (data.choices && data.choices[0] && data.choices[0].message) {
-                content = data.choices[0].message.content;
-            } else if (data.message && data.message.content) {
-                content = data.message.content;
-            } else if (data.response) {
-                content = data.response;
-            } else if (data.content) {
-                content = data.content;
-            } else {
-                content = JSON.stringify(data);
-            }
-
+            if (data.choices && data.choices[0] && data.choices[0].message) content = data.choices[0].message.content;
+            else if (data.message && data.message.content) content = data.message.content;
+            else if (data.response) content = data.response;
+            else if (data.content) content = data.content;
+            else content = JSON.stringify(data);
             addMessage('agent', content);
+            chatHistory.push({ role: "assistant", content: content });
         }
-
     } catch (e) {
+        chatHistory.pop();
         addMessage('system', `Network Error: ${e.message}`);
         triggerSpike();
     } finally {
-        // We do NOT stop working state here immediately in 'finally' if we rely on logs?
-        // Actually, for CHAT events (which might not generate logs if something fails BEFORE log),
-        // we should probably ensure cleanup.
-        // But if the agent is remote, we should defer to logs.
-        // Let's rely on the log '🏁' or '🚀' to stop it.
-        // Safety timeout?
-        setTimeout(() => {
-            // Only stop if we haven't seen an update recently? 
-            // For now, let's trust the logs. If logs fail, we might get stuck in working state.
-            // As a fallback, we can set it to false if we successfully got a response.
-            // But if the agent is doing background work, logs keep coming.
-            // Let's leave it to logs, but maybe force '🚀' on response success?
-        }, 1000);
+        isProcessingRequest = false;
+        setWorkingState(false);
+        setWaitingState(false);
+        if (activityIcon) {
+            activityIcon.textContent = '✅';
+            activityIcon.classList.remove('working');
+        }
+        setTimeout(scrollToBottom, 100);
     }
 }
 
 sendBtn.addEventListener('click', sendMessage);
 chatInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        sendMessage();
-    }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
 });
 
 if (fullscreenBtn) {
-    fullscreenBtn.addEventListener('click', () => {
-        console.log("Zen Mode Toggled");
-        document.body.classList.toggle('zen-mode');
-    });
-} else {
-    console.error("Fullscreen button not found!");
+    fullscreenBtn.addEventListener('click', () => { document.body.classList.toggle('zen-mode'); });
 }
+
+if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', () => {
+        scrollToBottom();
+        document.body.style.height = window.visualViewport.height + 'px';
+        window.scrollTo(0, 0);
+    });
+}
+
+document.addEventListener('dblclick', function (event) { event.preventDefault(); }, { passive: false });
+
+setTimeout(() => {
+    const sysMsg = document.getElementById('init-msg');
+    if (sysMsg) {
+        sysMsg.style.transition = 'opacity 1s ease';
+        sysMsg.style.opacity = '0';
+        setTimeout(() => sysMsg.remove(), 1000);
+    }
+}, 2000);
 
 initSphere();
 connectWebSocket();

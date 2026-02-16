@@ -160,9 +160,16 @@ async def tool_check_health(context=None):
 
     # 6. Connectivity (Internet & Tor)
     try:
-        async with httpx.AsyncClient(timeout=3.0) as client:
+        # Use Tor Proxy for general internet check if available, to be safe
+        check_proxy = None
+        if context and context.tor_proxy:
+             check_proxy = context.tor_proxy.replace("socks5://", "socks5h://")
+
+        async with httpx.AsyncClient(timeout=3.0, proxy=check_proxy) as client:
             resp = await client.get("https://1.1.1.1")
-            health_status.append(f"Internet: Connected ({resp.status_code})")
+            status_msg = f"Internet: Connected ({resp.status_code})"
+            if check_proxy: status_msg += " [via Tor]"
+            health_status.append(status_msg)
     except Exception:
         health_status.append("Internet: Disconnected or Blocked")
         

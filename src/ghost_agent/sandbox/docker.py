@@ -10,7 +10,7 @@ CONTAINER_NAME = "ghost-agent-sandbox"
 CONTAINER_WORKDIR = "/workspace"
 
 class DockerSandbox:
-    def __init__(self, host_workspace: Path):
+    def __init__(self, host_workspace: Path, tor_proxy: str = None):
         try:
             import docker
             from docker.errors import NotFound, APIError
@@ -23,6 +23,7 @@ class DockerSandbox:
 
         self.client = self.docker_lib.from_env()
         self.host_workspace = host_workspace.absolute()
+        self.tor_proxy = tor_proxy
         self.container = None
         self.image = "python:3.11-slim-bookworm"
 
@@ -75,17 +76,27 @@ class DockerSandbox:
                 pretty_log("Sandbox Error", f"Failed to start: {e}", level="ERROR")
                 raise e
 
+        # Prepare Proxy Env for Installs
+        env_vars = {}
+        if self.tor_proxy:
+            # Docker requires the host address usually, but for socks5h logic 
+            # we simply pass the proxy string. Note: Localhost routing from inside docker 
+            # is tricky. We assume the user has configured TOR_PROXY to be accessible.
+            # However, standard practice: direct container traffic via proxy.
+            p_url = self.tor_proxy.replace("socks5://", "socks5h://") 
+            env_vars = {"HTTP_PROXY": p_url, "HTTPS_PROXY": p_url}
+
         exit_code, _ = self.container.exec_run("test -f /root/.supercharged")
         if exit_code != 0:
             pretty_log("Sandbox", "Installing Deep Learning Stack (Wait ~60s)...", icon="📦")
-            self.container.exec_run("apt-get update && apt-get install -y coreutils nodejs npm g++ curl wget git procps")
+            self.container.exec_run("apt-get update && apt-get install -y coreutils nodejs npm g++ curl wget git procps", environment=env_vars)
             install_cmd = (
                 "pip install --no-cache-dir "
                 "torch numpy pandas scipy matplotlib seaborn "
                 "scikit-learn yfinance beautifulsoup4 networkx requests "
                 "pylint black mypy bandit"
             )
-            self.container.exec_run(install_cmd)
+            self.container.exec_run(install_cmd, environment=env_vars)
             self.container.exec_run("touch /root/.supercharged")
             pretty_log("Sandbox", "Environment Ready.", icon="✅")
 

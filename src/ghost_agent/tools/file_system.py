@@ -18,9 +18,14 @@ def _get_safe_path(sandbox_dir: Path, filename: str) -> Path:
     # 2. Resolve to absolute path
     target_path = (sandbox_dir / clean_name).resolve()
     
-    # 3. Ensure it's still inside sandbox
-    if not str(target_path).startswith(str(sandbox_dir.resolve())):
-        raise ValueError(f"Security Error: Path '{filename}' attempts to access outside sandbox.")
+    # 3. Ensure it's still inside sandbox (Robust Pathlib Check)
+    try:
+        if not target_path.is_relative_to(sandbox_dir.resolve()):
+            raise ValueError(f"Security Error: Path '{filename}' attempts to access outside sandbox.")
+    except AttributeError:
+        # Fallback for Python < 3.9
+        if not str(target_path.resolve()).startswith(str(sandbox_dir.resolve())):
+            raise ValueError(f"Security Error: Path '{filename}' attempts to access outside sandbox.")
         
     return target_path
 

@@ -2,6 +2,7 @@ import hashlib
 import json
 import logging
 import sys
+import os
 from pathlib import Path
 from typing import List, Optional
 
@@ -20,11 +21,16 @@ class GhostEmbeddingFunction(EmbeddingFunction):
     Custom robust embedding function that uses the upstream LLM.
     Handles proxy bypass and retries.
     """
-    def __init__(self, upstream_url: str):
+    def __init__(self, upstream_url: str, tor_proxy: str = None):
         import httpx
         self.url = f"{upstream_url}/v1/embeddings"
-        # Explicitly disable proxy for local LLM and disable http2
-        self.client = httpx.Client(timeout=60.0, proxy=None, http2=False)
+        
+        # Determine proxy usage
+        proxy_url = None
+        if "127.0.0.1" not in upstream_url and "localhost" not in upstream_url and tor_proxy:
+             proxy_url = tor_proxy.replace("socks5://", "socks5h://")
+
+        self.client = httpx.Client(timeout=60.0, proxy=proxy_url, http2=False)
 
     def __call__(self, input: Documents) -> Embeddings:
         # ChromaDB expects a List of Embeddings
@@ -43,7 +49,7 @@ class GhostEmbeddingFunction(EmbeddingFunction):
                     raise
 
 class VectorMemory:
-    def __init__(self, memory_dir: Path, upstream_url: str):
+    def __init__(self, memory_dir: Path, upstream_url: str, tor_proxy: str = None):
         """
         Robust Initialization with Explicit Settings.
         """
@@ -57,6 +63,13 @@ class VectorMemory:
 
         # --- GRANITE4 STYLE: LOCAL EMBEDDINGS ---
         try:
+            # ENFORCE TOR FOR HUGGINGFACE DOWNLOADS
+            # We set environment variables before loading SentenceTransformer
+            if tor_proxy:
+                socks_proxy = tor_proxy.replace("socks5://", "socks5h://")
+                os.environ["HTTP_PROXY"] = socks_proxy
+                os.environ["HTTPS_PROXY"] = socks_proxy
+            
             from chromadb.utils import embedding_functions
             self.embedding_fn = embedding_functions.SentenceTransformerEmbeddingFunction(
                 model_name="all-MiniLM-L6-v2"

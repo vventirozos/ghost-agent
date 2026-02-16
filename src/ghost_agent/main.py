@@ -49,13 +49,13 @@ async def lifespan(app):
     args = app.state.args
     context = app.state.context
     
-    context.llm_client = LLMClient(args.upstream_url)
+    context.llm_client = LLMClient(args.upstream_url, context.tor_proxy)
     
     pretty_log("System Boot", "Initializing components", icon=Icons.SYSTEM_BOOT)
 
     if importlib.util.find_spec("docker"):
         try:
-            context.sandbox_manager = DockerSandbox(context.sandbox_dir)
+            context.sandbox_manager = DockerSandbox(context.sandbox_dir, context.tor_proxy)
             await asyncio.to_thread(context.sandbox_manager.ensure_running)
         except Exception as e:
             pretty_log("Sandbox Failed", str(e), level="ERROR", icon=Icons.FAIL)
@@ -67,7 +67,7 @@ async def lifespan(app):
 
     if not args.no_memory:
         try:
-            context.memory_system = VectorMemory(context.memory_dir, args.upstream_url)
+            context.memory_system = VectorMemory(context.memory_dir, args.upstream_url, context.tor_proxy)
             if context.memory_system.collection:
                 count = context.memory_system.collection.count()
                 pretty_log("Memory Ready", f"{count} fragments indexed", icon=Icons.MEM_READ)

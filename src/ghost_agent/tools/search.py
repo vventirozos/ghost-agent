@@ -10,6 +10,10 @@ def truncate_query(query: str, limit: int = 35) -> str:
     return (query[:limit] + "..") if len(query) > limit else query
 
 async def tool_search_ddgs(query: str, tor_proxy: str):
+    # Ensure proxy is in correct format for ddgs/httpx
+    if tor_proxy and "socks5://" in tor_proxy and "socks5h://" not in tor_proxy:
+        tor_proxy = tor_proxy.replace("socks5://", "socks5h://")
+
     # Log with TOR status and truncated query
     pretty_log("DDGS Search", query, icon=Icons.TOOL_SEARCH)
     

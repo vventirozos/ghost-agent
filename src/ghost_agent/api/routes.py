@@ -131,7 +131,10 @@ async def chat_proxy(request: Request, background_tasks: BackgroundTasks):
     model = body.get("model", "Qwen3-4B-Instruct-2507")
     stream = body.get("stream", False)
     
-    content, created_time, req_id = await agent.handle_chat(body, background_tasks)
+    # Extract Request ID if provided (for Slack Bot correlation)
+    request_id = request.headers.get("X-Request-ID")
+    
+    content, created_time, req_id = await agent.handle_chat(body, background_tasks, request_id=request_id)
     
     # Null out the body immediately after the agent is done using it
     # This helps free the large JSON request data early
