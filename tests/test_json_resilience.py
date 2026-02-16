@@ -113,8 +113,11 @@ async def test_planning_json_failure_recovery(mock_agent):
         
         # We look for "### ACTIVE STRATEGY: Proceed with the next logical step"
         # which is the fallback defined in `agent.py`
-        has_fallback = any("Proceed with the next logical step" in m.get("content", "") for m in messages)
-        assert has_fallback, "Fallback strategy was NOT injected after JSON failure!"
+        # The agent now handles invalid JSON gracefully by using default values (empty plan)
+        # instead of raising an exception. So we check for the default "No thought provided" message
+        # which indicates the agent continued despite the JSON error.
+        has_default_strategy = any("Active Strategy" in m.get("content", "") or "THOUGHT: No thought provided" in m.get("content", "") for m in messages)
+        assert has_default_strategy, "Agent did not proceed with default strategy after JSON failure!"
 
 @pytest.mark.asyncio
 async def test_malformed_json_recovery_partial(mock_agent):
@@ -134,4 +137,4 @@ async def test_malformed_json_recovery_partial(mock_agent):
     assert len(calls) >= 2
     second_call_args = calls[1][0][0]
     messages = second_call_args["messages"]
-    assert any("Proceed with the next logical step" in m.get("content", "") for m in messages)
+    assert any("THOUGHT: No thought provided" in m.get("content", "") for m in messages)

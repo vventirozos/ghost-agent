@@ -1,7 +1,10 @@
+# src/ghost_agent/core/dream.py
+
 import json
 import logging
 import asyncio
 from typing import List, Dict, Any
+
 from .prompts import SYSTEM_PROMPT
 from ..utils.logging import Icons, pretty_log
 
@@ -10,23 +13,18 @@ logger = logging.getLogger("GhostAgent")
 class Dreamer:
     """
     Active Memory Consolidation System.
-    "Dreams" about recent memories to synthesize them into higher-order facts.
+    "Dreams" about recent memories to synthesize them into higher-order facts and extract heuristics.
     """
     def __init__(self, agent_context):
         self.context = agent_context
         self.memory = agent_context.memory_system
 
     async def dream(self, model_name: str = "Qwen3-4B-Instruct-2507"):
-        """
-        Main consolidation loop.
-        """
         if not self.memory or not self.memory.collection:
             return "Memory system not available."
-
-        pretty_log("Dream Mode", "Entering REM cycle (Consolidating Memory)...", icon="🌙")
+            
+        pretty_log("Dream Mode", "Entering REM cycle (Consolidating Memory & Extracting Heuristics)...", icon="💤")
         
-        # 1. Fetch Volatile Memories (Type="auto")
-        # We fetch a large batch to find clusters
         try:
             results = self.memory.collection.get(
                 where={"type": "auto"},
@@ -35,53 +33,44 @@ class Dreamer:
             )
         except Exception as e:
             return f"Dream error: {e}"
-
+            
         ids = results['ids']
         documents = results['documents']
-        metadatas = results['metadatas']
-        embeddings = results['embeddings']
         
         if len(documents) < 3:
-            return "Not enough entropy to dream. (Need > 3 auto-memories)"
-
-        # 2. Simple Clustering (Distance Based)
-        # Since we don't have numpy/sklearn guaranteed in the environment,
-        # we'll use a greedy clustering approach based on the existing ChromaDB structure
-        # or just simple text overlap if embeddings aren't easily math-able here.
-        
-        # Actually, let's use the LLM to cluster for us to be dependency-free.
-        # We'll batch them and ask for "Themes".
-        
+            return "Not enough entropy to dream. (Need > 3 auto-memories to form heuristics)"
+            
         mem_list = [f"ID:{i} | {doc}" for i, doc in zip(ids, documents)]
-        mem_block = "\n".join(mem_list[:50]) # Dream about top 50
+        mem_block = "\n".join(mem_list[:50])
+        pretty_log("Dream Mode", f"Analyzing {len(ids)} fragments for meta-patterns...", icon="🧠")
+        
+        prompt = f"""### IDENTITY
+You are the Active Memory Consolidation (Dream) Subsystem.
 
-        pretty_log("Dream Mode", f"Analyzing {len(ids)} fragments...", icon="🧠")
+### TASK
+Below is a list of raw, fragmented memories from the Ghost Agent's recent tasks.
+Your job is twofold:
+1. MERGE overlapping facts into single, high-density facts.
+2. EXTRACT HEURISTICS: Identify repeating errors or user preferences and translate them into a persistent behavioral rule (e.g., "Always use absolute paths in Docker").
 
-        prompt = f"""
-### MEMORY CONSOLIDATION TASK
-Below is a list of raw, fragmented memories.
-Your job is to identify **overlapping or related facts** and MERGE them into single, high-density facts.
-
-RAW MEMORIES:
+### RAW MEMORIES
 {mem_block}
 
-INSTRUCTIONS:
-1. Identify groups of 2+ memories that talk about the same specific topic.
-2. SYNTHESIZE them into a single, comprehensive statement.
-3. Mark the IDs of the original memories for DELETION.
-
-OUTPUT FORMAT (JSON ONLY):
+### OUTPUT FORMAT
+Return ONLY valid JSON. If no patterns exist, return empty lists.
 {{
   "consolidations": [
     {{
-      "synthesis": "The user is working on a Python-based Ghost Agent in /src/ghost_agent, focusing on memory optimization.",
+      "synthesis": "The user is working on a Python-based Ghost Agent.",
       "merged_ids": ["ID:...", "ID:..."]
     }}
+  ],
+  "heuristics": [
+    "Always wrap Docker network calls in a try/except."
   ]
 }}
-If no obvious merges exist, return empty list.
 """
-        
+
         try:
             payload = {
                 "model": model_name,
@@ -94,32 +83,43 @@ If no obvious merges exist, return empty list.
             result = json.loads(content)
             
             consolidations = result.get("consolidations", [])
+            heuristics = result.get("heuristics", [])
             
-            if not consolidations:
-                return "Dream cycle complete. No patterns found."
-
+            if not consolidations and not heuristics:
+                return "Dream cycle complete. No patterns or heuristics found."
+                
             ops_log = []
             
+            # Process Merged Facts
             for item in consolidations:
-                synthesis = item["synthesis"]
-                merged_ids = item["merged_ids"]
-                
-                # Check if we are actually reducing count
+                synthesis = item.get("synthesis")
+                merged_ids = item.get("merged_ids", [])
                 stripped_ids = [mid.replace("ID:", "").strip() for mid in merged_ids]
                 
-                if len(stripped_ids) > 1:
+                if synthesis and len(stripped_ids) > 1:
                     # ADD new fact
                     self.memory.add(synthesis, {"type": "consolidated_fact", "timestamp": "DREAM_CYCLE"})
-                    
                     # DELETE old fragments
                     self.memory.collection.delete(ids=stripped_ids)
-                    
                     ops_log.append(f"Merged {len(stripped_ids)} items -> '{synthesis[:50]}...'")
                     pretty_log("Dream Merge", f"Consolidated {len(stripped_ids)} into 1: {synthesis[:40]}...", icon="✨")
 
+            # Process Heuristics (Save to Skills Playbook)
+            if heuristics and self.context.skill_memory:
+                for h in heuristics:
+                    self.context.skill_memory.learn_lesson(
+                        task="Dream Cycle Heuristic Extraction",
+                        mistake="Inefficient or sub-optimal execution patterns.",
+                        solution=h,
+                        memory_system=self.memory
+                    )
+                    ops_log.append(f"Learned Heuristic: '{h[:50]}...'")
+                    pretty_log("Dream Heuristic", f"Extracted Rule: {h[:40]}...", icon="💡")
+                    
             summary = "\n".join(ops_log)
             pretty_log("Dream Wake", f"Consolidation Complete:\n{summary}", icon="☀️")
             return f"Dream Complete. Operations:\n{summary}"
-
+            
         except Exception as e:
             return f"Dream failed: {e}"
+            

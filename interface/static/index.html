@@ -9,43 +9,6 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>Ghost Interface</title>
-    <style>
-        #face-selector {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: #000;
-            z-index: 10000;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            flex-direction: column;
-            gap: 20px;
-            color: white;
-            font-family: 'Inter', sans-serif;
-        }
-        .face-btn {
-            padding: 15px 40px;
-            font-size: 18px;
-            border: 1px solid #333;
-            background: rgba(255, 255, 255, 0.05);
-            color: #fff;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            text-transform: uppercase;
-            letter-spacing: 2px;
-            border-radius: 4px;
-            min-width: 200px;
-            text-align: center;
-        }
-        .face-btn:hover {
-            background: rgba(255, 255, 255, 0.1);
-            border-color: #fff;
-            box-shadow: 0 0 20px rgba(255, 255, 255, 0.2);
-        }
-    </style>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link
@@ -59,14 +22,10 @@
             }
         }
     </script>
+    <link rel="stylesheet" href="/static/style.css">
 </head>
 
 <body>
-    <div id="face-selector">
-        <h2>SELECT INTERFACE</h2>
-        <div class="face-btn" onclick="selectFace('organic')">Organic</div>
-        <div class="face-btn" onclick="selectFace('ferrofluid')">Ferrofluid</div>
-    </div>
     <div id="background-layer">
         <div id="sphere-container"></div>
     </div>
@@ -110,29 +69,7 @@
         </footer>
     </div>
 
-    <script>
-        function selectFace(type) {
-            const head = document.getElementsByTagName('head')[0];
-            const body = document.body;
-
-            // Remove selector
-            const selector = document.getElementById('face-selector');
-            selector.style.opacity = '0';
-            setTimeout(() => selector.remove(), 500);
-
-            // Load CSS
-            const link = document.createElement('link');
-            link.rel = 'stylesheet';
-            link.href = type === 'organic' ? '/static/style.css' : '/static/style2.css';
-            head.appendChild(link);
-
-            // Load JS
-            const script = document.createElement('script');
-            script.type = 'module';
-            script.src = type === 'organic' ? '/static/app.js' : '/static/app2.js';
-            body.appendChild(script);
-        }
-    </script>
+    <script type="module" src="/static/app.js"></script>
 </body>
 
 </html>

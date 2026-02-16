@@ -1,3 +1,5 @@
+# src/ghost_agent/core/planning.py
+
 import json
 import uuid
 from enum import Enum
@@ -5,12 +7,12 @@ from typing import List, Dict, Optional, Any
 from dataclasses import dataclass, field, asdict
 
 class TaskStatus(str, Enum):
-    PENDING = "PENDING"     # Waiting for dependencies or not yet started
-    READY = "READY"         # Dependencies met, ready to start
+    PENDING = "PENDING"
+    READY = "READY"
     IN_PROGRESS = "IN_PROGRESS"
     DONE = "DONE"
     FAILED = "FAILED"
-    BLOCKED = "BLOCKED"     # Blocked by another task
+    BLOCKED = "BLOCKED"
 
 @dataclass
 class TaskNode:
@@ -19,7 +21,7 @@ class TaskNode:
     status: TaskStatus = TaskStatus.PENDING
     parent_id: Optional[str] = None
     children: List[str] = field(default_factory=list)
-    result_summary: str = ""  # Store output summary
+    result_summary: str = ""
 
     def to_dict(self):
         return asdict(self)
@@ -47,13 +49,6 @@ class TaskTree:
             self.nodes[task_id].status = status
             if result:
                 self.nodes[task_id].result_summary = result
-            
-            # Auto-update parent/children logic could go here
-            # e.g., if a task is DONE, check if children are READY? 
-            # Usually strict dependency implies children depend on parent? 
-            # Or parent depends on children (subtasks)?
-            # Convention: Parent is the Goal, Children are steps to achieve it.
-            # So if all children are DONE, Parent is DONE.
             if status == TaskStatus.DONE:
                 self._check_parent_completion(self.nodes[task_id].parent_id)
                 
@@ -71,16 +66,7 @@ class TaskTree:
             self._check_parent_completion(parent.parent_id, visited)
 
     def get_active_node(self) -> Optional[TaskNode]:
-        """
-        Finds the first actionable node (IN_PROGRESS or READY).
-        Traversal: Depth First Pre-Order to prioritize subtasks.
-        """
         if not self.root_id: return None
-        
-        # Priority:
-        # 1. Look for FAILED nodes to fix first (Recover)
-        # 2. Look for IN_PROGRESS nodes to continue (Focus)
-        # 3. Look for READY nodes to start (Advance)
         
         def find_status(node_id: str, target_statuses: List[TaskStatus], visited: set) -> Optional[TaskNode]:
             if node_id in visited: return None
@@ -88,26 +74,21 @@ class TaskTree:
             
             node = self.nodes.get(node_id)
             if not node: return None
-
-            # Check children first (sub-goals before parent goal)
             for child_id in node.children:
                 found = find_status(child_id, target_statuses, visited)
                 if found: return found
-            
-            if node.status in target_statuses and not node.children: # Only leaf nodes are actionable
-                 return node
+                
+            if node.status in target_statuses and not node.children: 
+                return node
             return None
 
-        # 1. Recovery Mode
         failed = find_status(self.root_id, [TaskStatus.FAILED], set())
         if failed: return failed
-
-        # 2. Focus Mode
+        
         in_prog = find_status(self.root_id, [TaskStatus.IN_PROGRESS], set())
         if in_prog: return in_prog
         
-        # 3. Advance Mode
-        ready = find_status(self.root_id, [TaskStatus.READY, TaskStatus.PENDING], set()) # Treat pending leaf as ready if parent active
+        ready = find_status(self.root_id, [TaskStatus.READY, TaskStatus.PENDING], set()) 
         if ready: return ready
         
         return None
@@ -124,21 +105,17 @@ class TaskTree:
         
         node = self.nodes.get(node_id)
         if not node: return
-
         indent = "  " * depth
         icon = {
-            "PENDING": "⏳", "READY": "👉", "IN_PROGRESS": "🔄", 
-            "DONE": "✅", "FAILED": "❌", "BLOCKED": "🔒"
-        }.get(node.status.value, "•")
+            "PENDING": "⏳", "READY": "🟢", "IN_PROGRESS": "🔄",
+            "DONE": "✅", "FAILED": "❌", "BLOCKED": "🛑"
+        }.get(node.status.value, "➖")
         
         lines.append(f"{indent}{icon} [{node.id}] {node.description} ({node.status.value})")
         for child_id in node.children:
             self._render_node(child_id, depth + 1, lines, visited)
 
     def load_from_json(self, json_data: Any):
-        """
-        Parses a simplified JSON structure to initialize or update the tree.
-        """
         if not json_data: return
         
         self.nodes = {}
@@ -151,15 +128,13 @@ class TaskTree:
             node_id = node_data.get("id", str(uuid.uuid4())[:4])
             if node_id in visited: return
             visited.add(node_id)
-
             desc = node_data.get("description", "Unknown Task")
             status_str = node_data.get("status", "PENDING").upper()
             try:
                 status = TaskStatus[status_str]
             except KeyError:
                 status = TaskStatus.PENDING
-            
-            # Create node
+                
             node = TaskNode(id=node_id, description=desc, status=status, parent_id=parent_id, children=[])
             self.nodes[node_id] = node
             
@@ -168,13 +143,12 @@ class TaskTree:
             elif parent_id:
                 if parent_id in self.nodes:
                     self.nodes[parent_id].children.append(node_id)
-            
-            # Recurse children
+                    
             children_data = node_data.get("children", [])
             if isinstance(children_data, list):
                 for child in children_data:
                     traverse(child, node_id, visited)
-                
+                    
         traverse(json_data)
 
     def to_json(self) -> Dict[str, Any]:
@@ -190,3 +164,4 @@ class TaskTree:
             }
             
         return serialize(self.root_id)
+        

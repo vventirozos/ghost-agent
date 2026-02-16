@@ -195,6 +195,14 @@ if (fullscreenBtn) {
     fullscreenBtn.addEventListener('click', () => { document.body.classList.toggle('zen-mode'); });
 }
 
+// Global toggle for Zen Mode (Persistent Key)
+document.addEventListener('keydown', (e) => {
+    // Toggle with 'Z' unless user is typing in the chat input
+    if (e.key.toLowerCase() === 'z' && document.activeElement !== chatInput) {
+        document.body.classList.toggle('zen-mode');
+    }
+});
+
 if (window.visualViewport) {
     window.visualViewport.addEventListener('resize', () => {
         scrollToBottom();

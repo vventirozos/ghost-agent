@@ -43,8 +43,8 @@ async def test_mode_switching_python_specialist(agent):
     messages = call_args["messages"]
     system_prompt = messages[0]["content"]
     
-    assert "PYTHON SPECIALIST" in system_prompt
-    assert "RAW, EXECUTABLE PYTHON CODE" in system_prompt
+    assert "Ghost Advanced Engineering Subsystem" in system_prompt
+    assert "RAW, EXECUTABLE CODE" in system_prompt
 
 @pytest.mark.asyncio
 async def test_history_truncation(agent):

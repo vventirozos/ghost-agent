@@ -187,6 +187,7 @@ void main() {
     // Tweak brightness based on state - BRIGHT ENERGY MODEL
     // Idle (activity 0.0) -> ~2.0 (+10% over previous 1.8)
     // Busy (activity 1.0) -> Higher bloom (2.2) - More intense!
+    // Error overrides to BRIGHT RED (2.5)
     vec3 idleState = color * 2.0; 
     vec3 busyState = color * 2.5;   
     
@@ -249,6 +250,8 @@ export function initSphere() {
     });
 
     sphere = new THREE.Mesh(geometry, material);
+    sphere.scale.set(1.44, 1.44, 1.44);
+    sphere.position.y = 0.25;
     scene.add(sphere);
 
     window.addEventListener('resize', () => {
