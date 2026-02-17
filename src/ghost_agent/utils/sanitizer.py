@@ -33,32 +33,52 @@ def _repair_line(line: str) -> str:
     Applies aggressive regex fixes to a single line based on common hallucinations.
     """
     # 0. Strip unexpected trailing backslash (causes: SyntaxError: unexpected character after line continuation)
-    # Only strip if we have an ODD number of trailing backslashes.
-    # e.g. "abc\" -> Strip (1 slash)
-    # e.g. "abc\\" -> Keep (2 slashes = escaped slash)
-    # e.g. "abc\\\" -> Strip (3 slashes)
     match = re.search(r'(\\+)\s*$', line)
     if match:
         num_slashes = len(match.group(1))
         if num_slashes % 2 != 0:
-            # Remove the last char (the trailing backslash)
-            line = line.rstrip()[:-1].rstrip()
+            # Strip the dangling backslash and any invisible trailing whitespace
+            # We preserve (N-1) backslashes (which is an even number, so valid escaped backslashes)
+            line = line[:match.start()] + ('\\' * (num_slashes - 1))
 
     # Fix: Trailing backslash or escaped quote at EOL (keep quote if it was escaped)
     # Hallucination: print("...\" ) -> print("...")
-    # NOTE: We removed the optional '?' from [\'"] so we don't clobber simple trailing backslashes
-    # which are already handled by the odd/even check above.
-    line = re.sub(r'\\([\'"])\s*$', r'\1', line).rstrip()
-    line = re.sub(r'\\([\'"]?)\s*\)\s*$', r'\1)', line)
+    # NOTE: We use negative lookbehind (?<!\\) to ensure we don't match \\" which is valid escaped backslash + quote
+    line = re.sub(r'(?<!\\)\\([\'"])\s*$', r'\1', line).rstrip()
+    line = re.sub(r'(?<!\\)\\([\'"]?)\s*\)\s*$', r'\1)', line)
      
     # Fix: hallucinated escape sequences in f-strings or prints
     # f\" -> f" , print(\" -> print("
     line = re.sub(r'([fbr\(,{])\\([\'"])', r'\1\2', line)
     # \") -> ")
-    line = re.sub(r'\\([\'"])([\),])', r'\1\2', line)
+    line = re.sub(r'(?<!\\)\\([\'"])([\),])', r'\1\2', line)
     
     # Fix: Trailing backticks at EOL (common hallucination: print("hi")`)
     line = line.rstrip('`')
+    
+    # Fix: Unterminated string literals (simple heuristic)
+    # Check for lines starting with simple assignment or print, having an open quote but no close
+    # This is conservative to avoid breaking multi-line strings
+    strip_line = line.strip()
+    if (strip_line.startswith("print(") or " = " in strip_line) and not strip_line.endswith(":"):
+        # Count quotes
+        dq_count = line.count('"') - line.count('\\"')
+        sq_count = line.count("'") - line.count("\\'")
+        
+        # If odd number of double quotes, and line ends with text (not a quote), append one
+        if dq_count % 2 != 0 and not line.strip().endswith('"') and not line.strip().endswith('",') and not line.strip().endswith('")'):
+             # Attempt to close it. Check if we need a paren too.
+             if "(" in line and ")" not in line:
+                 line += '")'
+             else:
+                 line += '"'
+                 
+        # If odd number of single quotes
+        elif sq_count % 2 != 0 and not line.strip().endswith("'") and not line.strip().endswith("',") and not line.strip().endswith("')"):
+             if "(" in line and ")" not in line:
+                 line += "')"
+             else:
+                 line += "'"
     
     return line
 
@@ -71,12 +91,22 @@ def fix_python_syntax(code: str) -> str:
     code = re.sub(r'(\?){3,}$', '', code) # Trailing ? sequence (stuttering)
     code = code.rstrip('`') # Trailing backticks at end of file
     
-    if "\\n" in code: # forceful newline fix if it looks like a dump
-         # This is dangerous if \n is actually meant to be in a string, 
-         # but common in some LLM outputs that dump raw string reprs.
-         # Let's be careful. Only do it if it looks like the whole file is affected?
-         # for now, let's skip global replace and trust the line-by-line or specific fixes.
-         pass
+    # --- MASHED NEWLINE HEURISTIC ---
+    if "\\n" in code:
+        try:
+            ast.parse(code)
+        except SyntaxError:
+            # Speculatively unescape the string
+            speculative_code = code.replace("\\n", "\n").replace("\\t", "\t")
+            speculative_code = speculative_code.replace('\\"', '"').replace("\\'", "'")
+            try:
+                ast.parse(speculative_code)
+                code = speculative_code  # Unescaping fixed the syntax!
+            except SyntaxError:
+                # If it still fails but the original was mashed on 1 line, keep the unescaped version.
+                # This allows the line-by-line repair logic below to actually work.
+                if code.count('\n') == 0:
+                    code = speculative_code
 
     # 1. Initial Parse Check
     try:

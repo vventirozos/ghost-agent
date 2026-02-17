@@ -59,6 +59,7 @@ class Icons:
     IDEA         = "💡"
     BUG          = "🐛"
     SHIELD       = "🛡️"
+    CUT          = "✂️"
 
 logger = logging.getLogger("GhostAgent")
 

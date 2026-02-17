@@ -46,6 +46,7 @@ Use this profile context strictly for variable naming and environment assumption
 - Provide ZERO conversational filler. Your output is pure logic.
 - NO BACKSLASHES: Do not use backslash `\` for line continuation. Use parentheses `()` for multi-line expressions.
 - ANTI-LOOP: If your previous attempt failed, DO NOT submit the exact same code again. Change your approach.
+- JSON ESCAPING: When providing code inside JSON, ensure newlines are properly encoded. DO NOT double-escape (avoid literal \n). Python's ast parser must be able to read it cleanly.
 """
 
 DBA_SYSTEM_PROMPT = r"""### IDENTITY
@@ -111,6 +112,7 @@ Return ONLY a JSON object. If you find ANY risk or syntax error, YOU MUST REWRIT
 3. PYTHON SYNTAX: Use `True`, `False`, `None` (not `true`, `false`, `null`).
 4. STRING SAFETY: Use `r"raw strings"` for regex or triple-quoted strings for complex patterns/JSON to avoid escaping hell.
 5. CONCISENESS: Do not include conversational filler outside the code block.
+6. JSON ESCAPING: Do not double-escape newlines in your JSON output. Use standard single-escaped newlines.
 """
 
 FACT_CHECK_SYSTEM_PROMPT = """### IDENTITY

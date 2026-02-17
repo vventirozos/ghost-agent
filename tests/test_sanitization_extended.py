@@ -95,8 +95,8 @@ def test_sanitizer_resilience():
     assert clean == "print('Hello')"
     assert error is None
 
-    # Ensure it catches syntax errors
-    bad_code = "print('Unterminated string"
+    # Ensure it catches UNFIXABLE syntax errors
+    bad_code = "def foo(:" 
     clean, error = sanitize_code(bad_code, "test.py")
     assert error is not None
     assert "SyntaxError" in str(error)

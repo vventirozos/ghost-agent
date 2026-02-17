@@ -16,6 +16,8 @@ async def helper_fetch_url_content(url: str) -> str:
             resp = await client.get(url, headers=headers)
             
             if resp.status_code != 200:
+                if resp.status_code == 403:
+                    return f"Error: Access Denied (403) via Tor. The site {url} likely blocks Tor exit nodes. Try a different source."
                 return f"Error: Received status {resp.status_code} from {url}"
             
             from bs4 import BeautifulSoup

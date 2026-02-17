@@ -139,6 +139,53 @@ class GhostAgent:
         final_history.reverse()
         return system_msgs + final_history
 
+    def _prune_context(self, messages: List[Dict[str, Any]], max_tokens: int = 8000) -> List[Dict[str, Any]]:
+        """
+        Proactively prunes messages to fit within context limits during the reasoning loop.
+        Prioritizes: System Prompt > Last User Message > Recent History
+        """
+        current_tokens = sum(estimate_tokens(str(m.get("content", ""))) for m in messages)
+        if current_tokens < max_tokens:
+            return messages
+            
+        pretty_log("Context Pruning", f"Reducing context from {current_tokens} to {max_tokens} tokens", icon=Icons.CUT)
+        
+        system_msgs = [m for m in messages if m.get("role") == "system"]
+        # Ensure we keep the last user message defining the current request
+        last_user = next((m for m in reversed(messages) if m.get("role") == "user"), None)
+        
+        # Calculate base tokens (System + Last User)
+        base_tokens = sum(estimate_tokens(str(m.get("content", ""))) for m in system_msgs)
+        if last_user:
+            base_tokens += estimate_tokens(str(last_user.get("content", "")))
+            
+        remaining_budget = max_tokens - base_tokens - 500 # 500 buffer
+        if remaining_budget < 0:
+            # Extreme case: System + User is too big. Just return System + Truncated User
+            if last_user:
+                return system_msgs + [last_user]
+            return system_msgs
+
+        # Fill remaining budget with most recent messages (excluding system and last_user if already handled)
+        pruned_history = []
+        for m in reversed(messages):
+            if m.get("role") == "system" or m == last_user:
+                continue
+                
+            msg_tokens = estimate_tokens(str(m.get("content", "")))
+            if remaining_budget - msg_tokens >= 0:
+                pruned_history.append(m)
+                remaining_budget -= msg_tokens
+            else:
+                break
+                
+        final_msgs = system_msgs
+        final_msgs.extend(reversed(pruned_history))
+        if last_user and last_user not in final_msgs:
+            final_msgs.append(last_user)
+            
+        return final_msgs
+
     async def run_smart_memory_task(self, interaction_context: str, model_name: str, selectivity: float):
         if not self.context.memory_system: return
         async with self.memory_semaphore:
@@ -195,13 +242,21 @@ class GhostAgent:
                 last_user_content = next((m.get("content", "") for m in reversed(messages) if m.get("role") == "user"), "")
                 lc = last_user_content.lower()
                 
-                coding_keywords = ["python", "bash", "sh", "script", "code", "def ", "import "]
-                coding_actions = ["write", "run", "execute", "debug", "fix", "create", "generate", "count", "calculate", "analyze", "scrape", "plot", "graph"]
+                coding_keywords = [r"\bpython\b", r"\bbash\b", r"\bsh\b", r"\bscript\b", r"\bcode\b", r"\bdef\b", r"\bimport\b"]
+                coding_actions = [r"\bwrite\b", r"\brun\b", r"\bexecute\b", r"\bdebug\b", r"\bfix\b", r"\bcreate\b", r"\bgenerate\b", r"\bcount\b", r"\bcalculate\b", r"\banalyze\b", r"\bscrape\b", r"\bplot\b", r"\bgraph\b"]
                 has_coding_intent = False
                 
-                if any(k in lc for k in coding_keywords):
-                    if any(a in lc for a in coding_actions): has_coding_intent = True
-                if any(x in lc for x in ["execute", "script", ".py"]): has_coding_intent = True
+                if any(re.search(k, lc) for k in coding_keywords):
+                    if any(re.search(a, lc) for a in coding_actions): 
+                        has_coding_intent = True
+                if any(x in lc for x in ["execute", ".py"]) or re.search(r'\bscript\b', lc): 
+                    has_coding_intent = True
+                
+                dba_keywords = [r"\bsql\b", r"\bpostgres\b", r"\bpostgresql\b", r"\bpsql\b", r"\bdatabase\b", r"\bpg_stat\b", r"\bexplain analyze\b", r"\bquery\b", r"\bcte\b", r"\brdbms\b", r"\bdba\b", r"\bschema\b", r"\bvacuum\b", r"\bmvcc\b"]
+                has_dba_intent = any(re.search(k, lc) for k in dba_keywords)
+                
+                meta_keywords = [r"\btitle\b", r"\bname this\b", r"\brename\b", r"\bsummary\b", r"\bsummarize\b", r"\bcaption\b", r"\bdescribe\b"]
+                is_meta_task = any(re.search(k, lc) for k in meta_keywords)
                 if re.match(r'^[\d\s\+\-\*\/\(\)\=\?]+$', lc):
                     has_coding_intent = False
                     
@@ -211,10 +266,9 @@ class GhostAgent:
                 scratch_data = self.context.scratchpad.list_all() if hasattr(self.context, 'scratchpad') else "None."
                 working_memory_context = f"\n\n### SCRAPBOOK (Persistent Data):\n{scratch_data}\n\n"
                 
-                dba_keywords = ["sql", "postgres", "postgresql", "psql", "database", "pg_stat", "explain analyze", "query", "cte", "rdbms", "dba", "schema", "vacuum", "mvcc"]
-                has_dba_intent = any(k in lc for k in dba_keywords)
 
-                if has_dba_intent:
+
+                if has_dba_intent and not is_meta_task:
                     base_prompt, current_temp = DBA_SYSTEM_PROMPT, 0.15
                     pretty_log("Mode Switch", "Ghost PostgreSQL DBA Activated", icon=Icons.TOOL_CODE)
                     if profile_context: base_prompt = base_prompt.replace("{{PROFILE}}", profile_context)
@@ -378,6 +432,9 @@ Last Tool Output: {last_tool_output}
                     else:
                         active_temp = current_temp
 
+                    # Proactive Context Pruning before request
+                    messages = self._prune_context(messages, max_tokens=self.context.args.max_context)
+
                     payload = {
                         "model": model, 
                         "messages": messages, 
@@ -402,6 +459,40 @@ Last Tool Output: {last_tool_output}
                         pretty_log("System Fault", "Upstream server unreachable", level="ERROR", icon=Icons.FAIL)
                         force_stop = True
                         break
+                    except httpx.HTTPStatusError as e:
+                        if e.response.status_code == 400 and "context" in e.response.text.lower():
+                            pretty_log("Context Overflow", "Emergency pruning triggered...", icon=Icons.WARN)
+                            # Emergency Prune: Keep System + Last User + 1 Last Tool Result (Truncated)
+                            system_msgs = [m for m in messages if m.get("role") == "system"]
+                            last_user = next((m for m in reversed(messages) if m.get("role") == "user"), None)
+                            
+                            recovery_msgs = system_msgs
+                            if last_user: recovery_msgs.append(last_user)
+                            
+                            # If the last thing was a tool output that caused the overflow, keep it but heavily truncated
+                            if tools_run_this_turn:
+                                last_tool = tools_run_this_turn[-1]
+                                last_tool["content"] = last_tool["content"][:1000] + "\n... [EMERGENCY TRUNCATION] ..."
+                                recovery_msgs.append(last_tool)
+                                
+                            messages = recovery_msgs
+                            messages.append({"role": "system", "content": "SYSTEM ALERT: The conversation history was truncated due to context limits. Focus ONLY on the immediate next step."})
+                            
+                            # RETRY ONCE with pruned context
+                            try:
+                                payload["messages"] = messages
+                                data = await self.context.llm_client.chat_completion(payload)
+                                if "choices" in data and len(data["choices"]) > 0:
+                                    msg = data["choices"][0]["message"]
+                            except Exception as retry_e:
+                                final_ai_content = f"CRITICAL: Context overflow recovery failed: {str(retry_e)}"
+                                force_stop = True
+                                break
+                        else:
+                            final_ai_content = f"CRITICAL: Upstream error {e.response.status_code}: {e.response.text}"
+                            pretty_log("System Fault", f"HTTP {e.response.status_code}", level="ERROR", icon=Icons.FAIL)
+                            force_stop = True
+                            break
                     except Exception as e:
                         final_ai_content = f"CRITICAL: An unexpected error occurred while communicating with the LLM: {str(e)}"
                         pretty_log("System Fault", str(e), level="ERROR", icon=Icons.FAIL)
