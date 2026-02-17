@@ -63,6 +63,10 @@ async def tool_gain_knowledge(filename: str, sandbox_dir: Path, memory_system):
     if filename.startswith("#") or filename.lower().startswith("title:") or (" " in filename and "." not in filename):
         return f"Error: You passed the document CONTENT or TITLE ('{filename[:30]}...'). You MUST pass the FILENAME (e.g. 'romeo_source.txt')."
 
+    # OS limit usually 255, we use 240 to be safe
+    if len(filename) > 240:
+        return f"Error: Filename is tool long ({len(filename)} chars). Max length is 240 characters. Did you accidentally pass the content?"
+
     if len(filename) > 2000:
         return "Error: Path is too long."
 

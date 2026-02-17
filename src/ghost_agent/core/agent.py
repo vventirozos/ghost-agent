@@ -13,7 +13,7 @@ import httpx
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 
-from .prompts import SYSTEM_PROMPT, CODE_SYSTEM_PROMPT, SMART_MEMORY_PROMPT, PLANNING_SYSTEM_PROMPT
+from .prompts import SYSTEM_PROMPT, CODE_SYSTEM_PROMPT, SMART_MEMORY_PROMPT, PLANNING_SYSTEM_PROMPT, DBA_SYSTEM_PROMPT
 from .planning import TaskTree, TaskStatus
 from ..utils.logging import Icons, pretty_log, request_id_context
 from ..utils.token_counter import estimate_tokens
@@ -211,7 +211,14 @@ class GhostAgent:
                 scratch_data = self.context.scratchpad.list_all() if hasattr(self.context, 'scratchpad') else "None."
                 working_memory_context = f"\n\n### SCRAPBOOK (Persistent Data):\n{scratch_data}\n\n"
                 
-                if has_coding_intent:
+                dba_keywords = ["sql", "postgres", "postgresql", "psql", "database", "pg_stat", "explain analyze", "query", "cte", "rdbms", "dba", "schema", "vacuum", "mvcc"]
+                has_dba_intent = any(k in lc for k in dba_keywords)
+
+                if has_dba_intent:
+                    base_prompt, current_temp = DBA_SYSTEM_PROMPT, 0.15
+                    pretty_log("Mode Switch", "Ghost PostgreSQL DBA Activated", icon=Icons.TOOL_CODE)
+                    if profile_context: base_prompt = base_prompt.replace("{{PROFILE}}", profile_context)
+                elif has_coding_intent:
                     base_prompt, current_temp = CODE_SYSTEM_PROMPT, 0.2
                     pretty_log("Mode Switch", "Ghost Python Specialist Activated", icon=Icons.TOOL_CODE)
                     if profile_context: base_prompt = base_prompt.replace("{{PROFILE}}", profile_context)

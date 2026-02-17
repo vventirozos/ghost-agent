@@ -1,5 +1,6 @@
 from typing import Dict, Any, List, Callable
 from .search import tool_search, tool_deep_research, tool_fact_check
+from .database import tool_postgres_admin
 from .file_system import tool_file_system
 from .tasks import tool_manage_tasks
 from .system import tool_system_utility
@@ -19,7 +20,37 @@ TOOL_DEFINITIONS = [
     {"type": "function", "function": {"name": "update_profile", "description": "Save a permanent fact about the user (name, preferences, location).", "parameters": {"type": "object", "properties": {"category": {"type": "string", "enum": ["root", "projects", "notes", "relationships"]}, "key": {"type": "string"}, "value": {"type": "string"}}, "required": ["category", "key", "value"]}}},
     {"type": "function", "function": {"name": "manage_tasks", "description": "Consolidated task manager (create, list, stop, stop_all).", "parameters": {"type": "object", "properties": {"action": {"type": "string", "enum": ["create", "list", "stop", "stop_all"]}, "task_name": {"type": "string"}, "cron_expression": {"type": "string"}, "prompt": {"type": "string"}, "task_identifier": {"type": "string"}}, "required": ["action"]}}},
     {"type": "function", "function": {"name": "dream_mode", "description": "Triggers Active Memory Consolidation. Use this when the user asks to 'sleep', 'rest', or 'consolidate memories'.", "parameters": {"type": "object", "properties": {}, "required": []}}},
-    {"type": "function", "function": {"name": "replan", "description": "Call this tool if your current strategy is failing or if you need to pause and rethink. It forces a fresh planning step.", "parameters": {"type": "object", "properties": {"reason": {"type": "string", "description": "Why are you replanning?"}}, "required": ["reason"]}}}
+    {"type": "function", "function": {"name": "replan", "description": "Call this tool if your current strategy is failing or if you need to pause and rethink. It forces a fresh planning step.", "parameters": {"type": "object", "properties": {"reason": {"type": "string", "description": "Why are you replanning?"}}, "required": ["reason"]}}},
+    {
+        "type": "function",
+        "function": {
+            "name": "postgres_admin",
+            "description": "MANDATORY for executing SQL queries, fetching schemas, running EXPLAIN ANALYZE, and checking active queries in a PostgreSQL database.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["query", "schema", "explain_analyze", "activity"],
+                        "description": "What to do: 'query' (run sql), 'schema' (dump public schema), 'explain_analyze' (run EXPLAIN ANALYZE), 'activity' (check pg_stat_activity)."
+                    },
+                    "connection_string": {
+                        "type": "string",
+                        "description": "The PostgreSQL connection URI (e.g., postgresql://user:pass@host:5432/db)."
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "The SQL query to execute. Required for 'query' and 'explain_analyze'."
+                    },
+                    "table_name": {
+                        "type": "string",
+                        "description": "Optional table name to filter the 'schema' action."
+                    }
+                },
+                "required": ["action", "connection_string"]
+            }
+        }
+    }
 ]
 
 def get_available_tools(context):
@@ -37,5 +68,6 @@ def get_available_tools(context):
         "update_profile": lambda **kwargs: tool_update_profile(profile_memory=context.profile_memory, memory_system=context.memory_system, **kwargs),
         "manage_tasks": lambda **kwargs: tool_manage_tasks(scheduler=context.scheduler, memory_system=context.memory_system, **kwargs),
         "dream_mode": lambda **kwargs: tool_dream_mode(context=context),
-        "replan": lambda reason: f"Strategy Reset Triggered. Reason: {reason}\nSYSTEM: The planner will sees this and should update the TaskTree accordingly."
+        "replan": lambda reason: f"Strategy Reset Triggered. Reason: {reason}\nSYSTEM: The planner will sees this and should update the TaskTree accordingly.",
+        "postgres_admin": lambda **kwargs: tool_postgres_admin(**kwargs)
     }

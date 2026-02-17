@@ -89,12 +89,13 @@ class DockerSandbox:
         exit_code, _ = self.container.exec_run("test -f /root/.supercharged")
         if exit_code != 0:
             pretty_log("Sandbox", "Installing Deep Learning Stack (Wait ~60s)...", icon="📦")
-            self.container.exec_run("apt-get update && apt-get install -y coreutils nodejs npm g++ curl wget git procps", environment=env_vars)
+            self.container.exec_run("apt-get update && apt-get install -y coreutils nodejs npm g++ curl wget git procps postgresql-client libpq-dev", environment=env_vars)
             install_cmd = (
                 "pip install --no-cache-dir "
                 "torch numpy pandas scipy matplotlib seaborn "
                 "scikit-learn yfinance beautifulsoup4 networkx requests "
-                "pylint black mypy bandit"
+                "pylint black mypy bandit "
+                "psycopg2-binary asyncpg sqlalchemy tabulate sqlglot"
             )
             self.container.exec_run(install_cmd, environment=env_vars)
             self.container.exec_run("touch /root/.supercharged")
