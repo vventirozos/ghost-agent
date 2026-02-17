@@ -585,7 +585,7 @@ Last Tool Output: {last_tool_output}
                 
                 if tools_run_this_turn and heavy_tools_used and (not final_ai_content or len(final_ai_content) < 50):
                     pretty_log("Perfect It Protocol", "Generating proactive optimization...", icon=Icons.IDEA)
-                    perfect_it_prompt = f"Task completed successfully. Final tool output:\n\n{tools_run_this_turn[-1]['content']}\n\n<system_directive>Based on your Perfection Protocol, analyze the result and proactively suggest one concrete way to optimize, scale, secure, or automate this work further. RESPOND IN PLAIN TEXT ONLY. DO NOT USE TOOLS.</system_directive>"
+                    perfect_it_prompt = f"Task completed successfully. Final tool output:\n\n{tools_run_this_turn[-1]['content']}\n\n<system_directive>First, succinctly present the tool output/result to the user. Then, based on your Perfection Protocol, analyze the result and proactively suggest one concrete way to optimize, scale, secure, or automate this work further. RESPOND IN PLAIN TEXT ONLY. DO NOT USE TOOLS.</system_directive>"
                     messages.append({"role": "system", "content": perfect_it_prompt})
                     
                     payload["messages"] = messages
