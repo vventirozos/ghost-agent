@@ -18,6 +18,8 @@ let targetWaitingState = 0.0;
 
 let colorOffset = 0.0;
 let targetColorOffset = 0.0;
+let currentRotationSpeedX = 0.0005;
+let currentRotationSpeedY = 0.001;
 
 // Deep eerie color palette - darker base
 let baseColor = new THREE.Color(0x010103);
@@ -238,6 +240,7 @@ export function initSphere() {
     // Reduced base radius (1.2 -> 1.0) so spikes don't overwhelm screen
     const geometry = new THREE.IcosahedronGeometry(1.0, 128);
 
+    // Initial Material (Organic) - Mode 0
     material = new THREE.ShaderMaterial({
         vertexShader, fragmentShader,
         uniforms: {
@@ -284,16 +287,41 @@ function animate() {
     let rotationSpeedX = 0.0005, rotationSpeedY = 0.001;
 
     // State machine controls how heavily the geometry deforms
+    let targetRotationSpeedX = 0.0005;
+    let targetRotationSpeedY = 0.001;
+
     if (targetErrorState > 0.5) {
         targetSpikeStrength = 2.5; // MASSIVE spike strength for error
-        rotationSpeedY = 0.02; // Spin faster
-    } else if (targetWorkingState > 0.5 || targetWaitingState > 0.5) {
-        targetSpikeStrength = 0.4 + Math.sin(time * 5.0) * 0.1; // Reduced working spikes (0.6 -> 0.4)
-        rotationSpeedY = 0.003;
-        rotationSpeedX = 0.002;
+        targetRotationSpeedY = 0.02; // Spin faster
     } else {
-        targetSpikeStrength = 0.15 + Math.sin(time * 1.5) * 0.05;
+        // Smoothly interpolate parameters based on working state
+        // Frequency: 1.5 (idle) -> 5.0 (busy)
+        // Base Amplitude: 0.15 (idle) -> 0.4 (busy)
+        // Amplitude Variance: 0.05 (idle) -> 0.1 (busy)
+
+        let activityLevel = Math.max(workingState, waitingState);
+
+        let freq = 1.5 + (activityLevel * 3.5);
+        let baseAmp = 0.15 + (activityLevel * 0.25);
+        let ampVar = 0.05 + (activityLevel * 0.05);
+
+        targetSpikeStrength = baseAmp + Math.sin(time * freq) * ampVar;
+
+        if (targetWorkingState > 0.5 || targetWaitingState > 0.5) {
+            targetRotationSpeedY = 0.003;
+            targetRotationSpeedX = 0.002;
+        }
     }
+
+    // Smooth rotation speed transition
+    // currentRotationSpeedX/Y are not yet defined in scope, using closures or module level if needed
+    // But since this function is re-entrant, we need persistent state.
+    // Let's add them to module scope (lines 7-21) or just use the mesh's current rotation delta if we were tracking it.
+    // Simpler: adds persistent variables outside animate.
+
+    // To avoid adding more global state, we can just use the target values directly if we accept *some* acceleration, 
+    // OR we can add the variables. Let's add them.
+
 
     // Hybrid Color Rotation:
     // Base idle rotation varies slowly with time
@@ -336,8 +364,12 @@ function animate() {
     material.uniforms.uErrorState.value = errorState;
     material.uniforms.uColorGlow.value = glowColor;
 
-    sphere.rotation.x += rotationSpeedX;
-    sphere.rotation.y += rotationSpeedY;
+    // Apply smoothed rotation speeds
+    currentRotationSpeedX += (targetRotationSpeedX - currentRotationSpeedX) * 0.01;
+    currentRotationSpeedY += (targetRotationSpeedY - currentRotationSpeedY) * 0.01;
+
+    sphere.rotation.x += currentRotationSpeedX;
+    sphere.rotation.y += currentRotationSpeedY;
 
     // Pulse the bloom organically based on activity
     // BRIGHT ENERGY LOGIC: 
@@ -366,5 +398,43 @@ export function triggerPulse(colorHex = '#2a003b') {
     // if(colorHex) targetGlowColor.set(colorHex); 
     spikeStrength += 0.3; // Sharp inhale heartbeat
 }
-export function setWorkingState(isWorking) { targetWorkingState = isWorking ? 1.0 : 0.0; }
-export function setWaitingState(isWaiting) { targetWaitingState = isWaiting ? 1.0 : 0.0; }
+export function triggerSmallPulse() {
+    spikeStrength += 0.05; // Gentle flutter
+}
+let workingTimeout;
+export function setWorkingState(isWorking) {
+    if (isWorking) {
+        // Only trigger if not already working/pending to avoid reset
+        if (targetWorkingState < 0.5 && !workingTimeout) {
+            workingTimeout = setTimeout(() => {
+                targetWorkingState = 1.0;
+                workingTimeout = null;
+            }, 2000);
+        }
+    } else {
+        // Immediate cancellation
+        if (workingTimeout) {
+            clearTimeout(workingTimeout);
+            workingTimeout = null;
+        }
+        targetWorkingState = 0.0;
+    }
+}
+
+let waitingTimeout;
+export function setWaitingState(isWaiting) {
+    if (isWaiting) {
+        if (targetWaitingState < 0.5 && !waitingTimeout) {
+            waitingTimeout = setTimeout(() => {
+                targetWaitingState = 1.0;
+                waitingTimeout = null;
+            }, 2000);
+        }
+    } else {
+        if (waitingTimeout) {
+            clearTimeout(waitingTimeout);
+            waitingTimeout = null;
+        }
+        targetWaitingState = 0.0;
+    }
+}

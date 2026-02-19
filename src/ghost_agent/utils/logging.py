@@ -60,6 +60,10 @@ class Icons:
     BUG          = "🐛"
     SHIELD       = "🛡️"
     CUT          = "✂️"
+    
+    # --- Custom Modes ---
+    MODE_GHOST   = "🫥"
+    POSTGRES     = "🐘"
 
 logger = logging.getLogger("GhostAgent")
 

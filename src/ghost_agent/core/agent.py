@@ -270,11 +270,11 @@ class GhostAgent:
 
                 if has_dba_intent and not is_meta_task:
                     base_prompt, current_temp = DBA_SYSTEM_PROMPT, 0.15
-                    pretty_log("Mode Switch", "Ghost PostgreSQL DBA Activated", icon=Icons.TOOL_CODE)
+                    pretty_log("Mode Switch", "Ghost PostgreSQL DBA Activated", icon=Icons.MODE_GHOST)
                     if profile_context: base_prompt = base_prompt.replace("{{PROFILE}}", profile_context)
                 elif has_coding_intent:
                     base_prompt, current_temp = CODE_SYSTEM_PROMPT, 0.2
-                    pretty_log("Mode Switch", "Ghost Python Specialist Activated", icon=Icons.TOOL_CODE)
+                    pretty_log("Mode Switch", "Ghost Python Specialist Activated", icon=Icons.MODE_GHOST)
                     if profile_context: base_prompt = base_prompt.replace("{{PROFILE}}", profile_context)
                 else:
                     base_prompt, current_temp = SYSTEM_PROMPT.replace("{{PROFILE}}", profile_context), self.context.args.temperature
@@ -587,7 +587,12 @@ Last Tool Output: {last_tool_output}
                         try:
                             t_args = json.loads(tool["function"]["arguments"])
                             a_hash = f"{fname}:{json.dumps(t_args, sort_keys=True)}"
-                        except: t_args, a_hash = {}, f"{fname}:error"
+                        except Exception as e:
+                            err_msg = {"role": "tool", "tool_call_id": tool["id"], "name": fname, "content": f"Error: Invalid JSON arguments - {str(e)}"}
+                            messages.append(err_msg)
+                            tools_run_this_turn.append(err_msg)
+                            last_was_failure = True
+                            continue
                         
                         is_state_tool = fname in ["file_system", "knowledge_base", "web_search", "recall", "list_files", "system_utility", "inspect_file", "manage_tasks"]
                         

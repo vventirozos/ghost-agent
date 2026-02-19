@@ -28,6 +28,38 @@ from .tools.registry import TOOL_DEFINITIONS
 
 logger = logging.getLogger("GhostAgent")
 
+# Global references for the scheduler to pick up
+GLOBAL_CONTEXT = None
+GLOBAL_AGENT = None
+
+async def proactive_runner(task_id, prompt):
+    """
+    Top-level function for scheduled tasks.
+    Must be top-level to be picklable by apscheduler.
+    """
+    global GLOBAL_CONTEXT, GLOBAL_AGENT
+    
+    if not GLOBAL_CONTEXT or not GLOBAL_AGENT:
+        logger.error(f"Task {task_id} failed: Global context/agent not initialized")
+        return
+
+    pretty_log("Proactive Run", f"Task: {task_id}", icon=Icons.BRAIN_PLAN)
+    
+    # Use the full agent loop for proactive tasks
+    payload = {
+        "model": "Qwen3-4B-Instruct-2507",
+        "messages": [
+            {"role": "user", "content": f"BACKGROUND TASK: {prompt}"}
+        ]
+    }
+    
+    try:
+        # Pass background_tasks=None as we are already in a background task
+        await GLOBAL_AGENT.handle_chat(payload, background_tasks=None)
+    except Exception as e:
+        logger.error(f"Task {task_id} failed: {e}")
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Ghost Agent: Autonomous AI Service")
     parser.add_argument("--host", default="0.0.0.0")
@@ -48,6 +80,11 @@ def parse_args():
 async def lifespan(app):
     args = app.state.args
     context = app.state.context
+    
+    # Set globals for the scheduler
+    global GLOBAL_CONTEXT, GLOBAL_AGENT
+    GLOBAL_CONTEXT = context
+
     
     context.llm_client = LLMClient(args.upstream_url, context.tor_proxy)
     
@@ -83,6 +120,8 @@ async def lifespan(app):
     
     agent = GhostAgent(context)
     app.state.agent = agent
+    GLOBAL_AGENT = agent
+
     
 
     # --- IDLE MONITORING REMOVED ---
@@ -92,34 +131,8 @@ async def lifespan(app):
     # ----------------------------
     
     # Real proactive task runner
-    async def proactive_runner(task_id, prompt):
-        pretty_log("Proactive Run", f"Task: {task_id}", icon=Icons.BRAIN_PLAN)
-        payload = {
-            "model": "Qwen3-4B-Instruct-2507",
-            "messages": [
-                {"role": "system", "content": "You are in AUTONOMOUS MODE. Execute the task and use tools if needed."},
-                {"role": "user", "content": prompt}
-            ],
-            "tools": TOOL_DEFINITIONS,
-            "tool_choice": "auto"
-        }
-        try:
-            data = await context.llm_client.chat_completion(payload)
-            msg = data.get("choices", [])[0].get("message", {})
-            tool_calls = msg.get("tool_calls", [])
-            if tool_calls:
-                for tool in tool_calls:
-                    fname = tool["function"]["name"]
-                    try: t_args = json.loads(tool["function"]["arguments"])
-                    except: t_args = {}
-                    if fname in agent.available_tools:
-                        pretty_log("Proactive Tool", fname, icon=Icons.TOOL_CODE)
-                        result = await agent.available_tools[fname](**t_args)
-                        pretty_log("Proactive Ok", result, icon=Icons.OK)
-            else:
-                pretty_log("Proactive Idle", "No action required", icon=Icons.BRAIN_THINK)
-        except Exception as e:
-            logger.error(f"Task {task_id} failed: {e}")
+    # Moved to top-level: proactive_runner
+
 
     tasks.run_proactive_task_fn = proactive_runner
 

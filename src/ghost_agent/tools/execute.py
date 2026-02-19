@@ -1,5 +1,6 @@
 import asyncio
 import os
+import shlex
 import re
 import logging
 import uuid
@@ -10,6 +11,7 @@ from pathlib import Path
 from typing import List
 from ..utils.logging import Icons, pretty_log
 from ..utils.sanitizer import sanitize_code
+from .file_system import _get_safe_path
 
 async def tool_execute(filename: str, content: str, sandbox_dir: Path, sandbox_manager, scrapbook=None, args: List[str] = None, memory_dir: Path = None):
     # --- 🛡️ HIJACK LAYER: CODE SANITIZATION ---
@@ -42,8 +44,14 @@ async def tool_execute(filename: str, content: str, sandbox_dir: Path, sandbox_m
     pretty_log("Execution Task", filename, icon=Icons.TOOL_CODE)
     
     if not sandbox_manager: return _format_error("Error: Sandbox manager not initialized.")
+    if not filename: return _format_error("Error: filename is required.")
+
     rel_path = str(filename).lstrip("/")
-    host_path = sandbox_dir / rel_path
+    
+    try:
+        host_path = _get_safe_path(sandbox_dir, filename)
+    except ValueError as ve:
+        return _format_error(str(ve))
     
     # Stubbornness Guard
     if host_path.exists():
@@ -64,9 +72,11 @@ async def tool_execute(filename: str, content: str, sandbox_dir: Path, sandbox_m
         runtime_map = {"py": "python3 -u", "js": "node", "sh": "bash"}
         runner = runtime_map.get(ext, "chmod +x" if ext == "sh" else "")
         cmd = f"{runner} {rel_path}" if runner else f"./{rel_path}"
-        if args: cmd += " " + " ".join([str(a).replace("'", "'\\''") for a in args])
+        if args: 
+            # SECURITY FIX: Use shlex.quote to safely escape all arguments
+            cmd += " " + " ".join(shlex.quote(str(a)) for a in args)
 
-        wrapper_name = f"_run_{uuid.uuid4().hex[:6]}.sh"
+        wrapper_name = f"_run_{filename}.sh"
         wrapper_path = sandbox_dir / wrapper_name
         wrapper_path.write_text(f"#!/bin/sh\n{cmd}\n")
         os.chmod(wrapper_path, 0o777)

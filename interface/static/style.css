@@ -127,6 +127,12 @@ main#chat-container {
     margin-bottom: 10px;
     max-height: 55vh;
     margin-top: auto;
+    transition: mask-image 0.3s ease, -webkit-mask-image 0.3s ease;
+}
+
+main#chat-container:hover {
+    mask-image: linear-gradient(to bottom, transparent 0%, black 0%, black 100%);
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 0%, black 100%);
 }
 
 #chat-log {
@@ -331,20 +337,24 @@ footer#input-area-wrapper {
 
 /* Custom Scrollbar & Animations */
 ::-webkit-scrollbar {
-    width: 5px;
+    width: 10px;
 }
 
 ::-webkit-scrollbar-track {
-    background: transparent;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.15);
+    background: rgba(0, 243, 255, 0.3);
     border-radius: 5px;
+    border: 1px solid rgba(0, 243, 255, 0.1);
+    transition: background 0.3s ease;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-    background: rgba(255, 255, 255, 0.3);
+    background: var(--accent-color);
+    box-shadow: 0 0 10px var(--accent-color);
 }
 
 @keyframes slideIn {

@@ -73,7 +73,7 @@ async def tool_list_files(sandbox_dir: Path, memory_system=None):
     try:
         # Shallow listing like Granite4 for high performance
         files = os.listdir(sandbox_dir)
-        tree = [f"📄 {f}" if (sandbox_dir / f).is_file() else f"📁 {f}" for f in sorted(files) if not f.startswith(".")]
+        tree = [f"  {f}" if (sandbox_dir / f).is_file() else f"  {f}/" for f in sorted(files) if not f.startswith(".")]
         
         sandbox_tree = "\n".join(tree) if tree else "[Empty]"
         return f"CURRENT SANDBOX DIRECTORY STRUCTURE:\n{sandbox_tree}\n\n(Use these filenames for all file tools)"
@@ -128,24 +128,28 @@ async def tool_file_search(pattern: str, sandbox_dir: Path, filename: str = None
         
         pretty_log("File Search", f"'{pattern}' in {search_root.name}/", icon=Icons.TOOL_FILE_S)
     
-        results = []
-        if search_root.is_file():
-            files = [search_root]
-        else:
-            files = list(search_root.rglob("*"))
-            
-        for fpath in files:
-            if not fpath.is_file() or fpath.suffix.lower() in ['.pdf', '.bin', '.pyc']: continue
-            try:
-                with open(fpath, 'r', errors='ignore') as f:
-                    for i, line in enumerate(f):
-                        if pattern.lower() in line.lower():
-                            results.append(f"[{fpath.relative_to(sandbox_dir)}:{i+1}] {line.strip()}")
-                            if len(results) > 15: break
-            except: pass
-            if len(results) > 15: break
-            
-        return "\n".join(results) if results else "Report: No matches found. (Tip: Use list_files to verify the path)"
+        def _search_sync():
+            results = []
+            if search_root.is_file():
+                files = [search_root]
+            else:
+                files = list(search_root.rglob("*"))
+                
+            for fpath in files:
+                if not fpath.is_file() or fpath.suffix.lower() in ['.pdf', '.bin', '.pyc']: continue
+                try:
+                    with open(fpath, 'r', errors='ignore') as f:
+                        for i, line in enumerate(f):
+                            if pattern.lower() in line.lower():
+                                results.append(f"[{fpath.relative_to(sandbox_dir)}:{i+1}] {line.strip()}")
+                                if len(results) > 15: break
+                except: pass
+                if len(results) > 15: break
+                
+            return "\n".join(results) if results else "Report: No matches found. (Tip: Use list_files to verify the path)"
+
+        return await asyncio.to_thread(_search_sync)
+
     except ValueError as ve: return str(ve)
     except Exception as e: return f"Error: {e}"
 

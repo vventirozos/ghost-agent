@@ -1,4 +1,4 @@
-import { initSphere, updateSphereColor, triggerSpike, triggerPulse, setWorkingState, setWaitingState, triggerNextColor } from './sphere.js';
+import { initSphere, updateSphereColor, triggerSpike, triggerPulse, triggerSmallPulse, setWorkingState, setWaitingState, triggerNextColor } from './sphere.js';
 
 const chatLog = document.getElementById('chat-log');
 const chatInput = document.getElementById('chat-input');
@@ -35,7 +35,12 @@ function connectWebSocket() {
                 const icon = extractIcon(data.content);
                 const flashColor = getIconColor(icon);
 
-                triggerPulse(flashColor); // Always heartbeat on new log
+                const isMonologue = data.content.includes("PLANNER MONOLOGUE");
+                if (isMonologue) {
+                    triggerSmallPulse();
+                } else {
+                    triggerPulse(flashColor); // Always heartbeat on new log
+                }
 
                 if (icon) {
                     updateActivityIcon(icon);
